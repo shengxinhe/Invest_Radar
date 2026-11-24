@@ -28,6 +28,7 @@ const tabs = [
   { key: "quote", label: "行情", icon: ["M3 17l5-6 4 3 5-8 4 5", "M3 21h18"] },
   { key: "watch", label: "自选", icon: ["M12 2l2.9 6.1L21 9l-4.5 4.3L17.8 20 12 16.9 6.2 20l1.3-6.7L3 9l6.1-.9z"] },
   { key: "ai", label: "AI", icon: ["M12 3a4 4 0 0 1 4 4v1a4 4 0 0 1 4 4v2a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4v-2a4 4 0 0 1 4-4V7a4 4 0 0 1 4-4z", "M9.5 12.5h.01M14.5 12.5h.01", "M9.5 16h5"] },
+  { key: "me", label: "我的", icon: ["M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z", "M4 21c0-4 3.6-6 8-6s8 2 8 6"] },
 ];
 
 const glider = ref(null);

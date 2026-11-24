@@ -39,6 +39,15 @@ def conn():
     return c
 
 
+def _uid(uid):
+    """M8: 未显式传 uid 时，取当前请求身份（见 invest_radar/ctx.py）"""
+    if uid is None:
+        from . import ctx
+        return ctx.current_uid()
+    return int(uid)
+
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS stock (
   code TEXT PRIMARY KEY,
@@ -54,14 +63,42 @@ CREATE VIRTUAL TABLE IF NOT EXISTS stock_fts USING fts5(
   code, name, pinyin, concepts, content='stock', content_rowid='rowid'
 );
 
-CREATE TABLE IF NOT EXISTS watch (
-  code TEXT PRIMARY KEY,
+-- M8 多用户：名字即账户（无密码）
+CREATE TABLE IF NOT EXISTS app_user (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL,
+  name_key      TEXT NOT NULL UNIQUE,
+  created_at    INTEGER,
+  last_seen_at  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_user_key ON app_user(name_key);
+
+-- M8 私有表：自选股按 (user_id, code) 隔离，grp 为分组
+CREATE TABLE IF NOT EXISTS watch (  user_id INTEGER NOT NULL DEFAULT 1,
+  code TEXT NOT NULL,
   role TEXT,
   tags TEXT,
   thesis TEXT,
   keywords TEXT,
   sort INTEGER DEFAULT 0,
-  created_at INTEGER
+  grp TEXT DEFAULT '',
+  created_at INTEGER,
+  PRIMARY KEY (user_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_watch_user_sort ON watch(user_id, sort, code);
+CREATE INDEX IF NOT EXISTS idx_watch_user_grp ON watch(user_id, grp, sort);
+
+-- M8 每人独立 DeepSeek Key（Fernet 密文，密钥走环境变量）
+CREATE TABLE IF NOT EXISTS user_secret (
+  user_id          INTEGER PRIMARY KEY,
+  deepseek_key_enc TEXT DEFAULT '',
+  key_hint         TEXT DEFAULT '',
+  model_cheap      TEXT DEFAULT 'deepseek-chat',
+  model_strong     TEXT DEFAULT 'deepseek-reasoner',
+  ai_enabled       INTEGER DEFAULT 1,
+  updated_at       INTEGER,
+  tested_at        INTEGER DEFAULT 0,
+  test_ok          INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS entry (
@@ -85,15 +122,21 @@ CREATE VIRTUAL TABLE IF NOT EXISTS entry_fts USING fts5(
   title, content, content='entry', content_rowid='rowid'
 );
 
+-- M8: 一条词条可存 N 个用户各自的解读
 CREATE TABLE IF NOT EXISTS entry_ai (
-  entry_id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL DEFAULT 1,
+  entry_id TEXT NOT NULL,
   model TEXT,
   summary TEXT,
   why_matters TEXT,
   thesis_impact TEXT,
   read_hint TEXT,
   tokens INTEGER,
-  created_at INTEGER
+  created_at INTEGER,
+  thesis_hash TEXT DEFAULT '',
+  prompt_version TEXT DEFAULT 'v0',
+  cache_key TEXT DEFAULT '',
+  PRIMARY KEY (user_id, entry_id)
 );
 
 CREATE TABLE IF NOT EXISTS chat (
@@ -101,9 +144,11 @@ CREATE TABLE IF NOT EXISTS chat (
   scope TEXT,
   role TEXT,
   content TEXT,
-  created_at INTEGER
+  created_at INTEGER,
+  user_id INTEGER DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_chat_scope ON chat(scope, created_at);
+CREATE INDEX IF NOT EXISTS idx_chat_user ON chat(user_id, scope, created_at);
 
 CREATE TABLE IF NOT EXISTS quote (
   code TEXT, ts INTEGER, price REAL, pct REAL,
@@ -115,7 +160,10 @@ CREATE TABLE IF NOT EXISTS quote (
 
 CREATE TABLE IF NOT EXISTS fetch_log (
   key TEXT PRIMARY KEY,
-  fetched_at INTEGER
+  fetched_at INTEGER,
+  source TEXT DEFAULT '',
+  status TEXT DEFAULT 'ok',
+  error TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS kline (
@@ -132,6 +180,111 @@ CREATE TABLE IF NOT EXISTS meta (
   k TEXT PRIMARY KEY,
   v TEXT
 );
+
+-- ============ M8: 以下表原本只由 migrations 创建，补齐以保证全新库可用 ============
+
+CREATE TABLE IF NOT EXISTS app_session (
+  sid        TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  last_seen  INTEGER,
+  ip         TEXT DEFAULT '',
+  ua         TEXT DEFAULT '',
+  user_id    INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_sess_last ON app_session(last_seen DESC);
+CREATE INDEX IF NOT EXISTS idx_sess_user ON app_session(user_id, last_seen DESC);
+
+CREATE TABLE IF NOT EXISTS entry_user_state (
+  user_id    INTEGER NOT NULL DEFAULT 1,
+  entry_id   TEXT NOT NULL,
+  status     TEXT DEFAULT 'unread',
+  is_read    INTEGER DEFAULT 0,
+  note       TEXT DEFAULT '',
+  updated_at INTEGER,
+  PRIMARY KEY (user_id, entry_id)
+);
+CREATE INDEX IF NOT EXISTS idx_eus_user_status
+  ON entry_user_state(user_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS thesis_history (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER DEFAULT 1,
+  code       TEXT NOT NULL,
+  thesis_old TEXT,
+  thesis_new TEXT,
+  reason     TEXT DEFAULT '',
+  changed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_th_user ON thesis_history(user_id, code, changed_at DESC);
+
+CREATE TABLE IF NOT EXISTS ai_analysis_version (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id         INTEGER DEFAULT 1,
+  entry_id        TEXT NOT NULL,
+  cache_key       TEXT NOT NULL,
+  model           TEXT,
+  summary         TEXT, why_matters TEXT, thesis_impact TEXT, read_hint TEXT,
+  tokens          INTEGER DEFAULT 0,
+  thesis_hash     TEXT,
+  prompt_version  TEXT,
+  created_at      INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_aav_user
+  ON ai_analysis_version(user_id, entry_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS notification_log (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER DEFAULT 1,
+  level      TEXT,
+  code       TEXT,
+  title      TEXT,
+  entry_id   TEXT,
+  channel    TEXT DEFAULT 'wechat',
+  status     TEXT DEFAULT 'queued',
+  created_at INTEGER,
+  sent_at    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_nl_user ON notification_log(user_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS research_record (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER DEFAULT 1,
+  code       TEXT NOT NULL,
+  title      TEXT NOT NULL,
+  content    TEXT DEFAULT '',
+  tags       TEXT DEFAULT '',
+  entry_ids  TEXT DEFAULT '',
+  created_at INTEGER,
+  updated_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_rr_user ON research_record(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS research_report (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER DEFAULT 1,
+  kind       TEXT NOT NULL,
+  code       TEXT DEFAULT '',
+  title      TEXT NOT NULL,
+  content    TEXT DEFAULT '',
+  meta       TEXT DEFAULT '',
+  period     TEXT DEFAULT '',
+  created_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_rep_user ON research_report(user_id, kind, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS quote_daily (
+  code TEXT, date TEXT, price REAL, pct REAL,
+  open REAL, high REAL, low REAL, prev_close REAL,
+  amount_wan REAL, turnover_pct REAL, pe REAL, pb REAL, mcap REAL,
+  PRIMARY KEY (code, date)
+);
+CREATE INDEX IF NOT EXISTS idx_qd_code ON quote_daily(code, date DESC);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version    TEXT PRIMARY KEY,
+  name       TEXT,
+  applied_at INTEGER
+);
 """
 
 
@@ -140,6 +293,12 @@ def init():
     c = conn()
     c.executescript(SCHEMA)
     c.commit()
+
+    # M8: 保证房主账户（user_id=1）存在，存量数据都归它
+    if not c.execute("SELECT 1 FROM app_user WHERE id=1").fetchone():
+        c.execute("INSERT INTO app_user(id,name,name_key,created_at,last_seen_at) "
+                  "VALUES(1,?,?,?,?)", ("房主", "房主", now(), now()))
+        c.commit()
 
     # 首次启动：把 config.WATCHLIST 导入 watch 表 + stock 表（保证有名字显示）
     if not c.execute("SELECT 1 FROM meta WHERE k='watch_seeded'").fetchone():
@@ -151,6 +310,7 @@ def init():
                 keywords=s.get("keywords", []),
                 tags=s.get("alias", []),
                 sort=i,
+                uid=1,
             )
             # 同步 stock 主数据，避免 UI 显示成代码
             if not c.execute("SELECT 1 FROM stock WHERE code=?", (s["code"],)).fetchone():
@@ -180,21 +340,24 @@ def now():
     return int(time.time())
 
 
-# ---------------- watch ----------------
+# ---------------- watch（M8: 按 user_id 隔离） ----------------
 
-def upsert_watch(code, role=None, thesis=None, keywords=None, tags=None, sort=None):
+def upsert_watch(code, role=None, thesis=None, keywords=None, tags=None, sort=None,
+                 uid=None, grp=None):
+    uid = _uid(uid)
     c = conn()
-    row = c.execute("SELECT * FROM watch WHERE code=?", (code,)).fetchone()
+    row = c.execute("SELECT * FROM watch WHERE user_id=? AND code=?",
+                    (uid, code)).fetchone()
     if row is None:
         c.execute(
-            "INSERT INTO watch(code,role,tags,thesis,keywords,sort,created_at) "
-            "VALUES(?,?,?,?,?,?,?)",
-            (code, role or "", json.dumps(tags or [], ensure_ascii=False),
+            "INSERT INTO watch(user_id,code,role,tags,thesis,keywords,sort,grp,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (uid, code, role or "", json.dumps(tags or [], ensure_ascii=False),
              thesis or "", json.dumps(keywords or [], ensure_ascii=False),
-             sort or 0, now()))
+             sort or 0, grp or "", now()))
     else:
         sets, vals = [], []
-        for k, v in (("role", role), ("thesis", thesis), ("sort", sort)):
+        for k, v in (("role", role), ("thesis", thesis), ("sort", sort), ("grp", grp)):
             if v is not None:
                 sets.append(f"{k}=?")
                 vals.append(v)
@@ -205,19 +368,22 @@ def upsert_watch(code, role=None, thesis=None, keywords=None, tags=None, sort=No
             sets.append("tags=?")
             vals.append(json.dumps(tags, ensure_ascii=False))
         if sets:
-            vals.append(code)
-            c.execute(f"UPDATE watch SET {','.join(sets)} WHERE code=?", vals)
+            vals.extend([uid, code])
+            c.execute(f"UPDATE watch SET {','.join(sets)} "
+                      f"WHERE user_id=? AND code=?", vals)
     c.commit()
 
 
-def list_watch():
-    """返回关注池（带股票名称）"""
+def list_watch(uid=None):
+    """返回该用户的关注池（带股票名称）"""
+    uid = _uid(uid)
     c = conn()
     rows = c.execute("""
         SELECT w.*, COALESCE(s.name,'') AS name, COALESCE(s.industry,'') AS industry
         FROM watch w LEFT JOIN stock s ON s.code = w.code
+        WHERE w.user_id = ?
         ORDER BY w.sort, w.code
-    """).fetchall()
+    """, (uid,)).fetchall()
     out = []
     for r in rows:
         out.append({
@@ -229,16 +395,19 @@ def list_watch():
             "tags": json.loads(r["tags"] or "[]"),
             "industry": r["industry"] or "",
             "sort": r["sort"] or 0,
+            "grp": r["grp"] or "",
         })
     return out
 
 
-def get_watch(code):
+def get_watch(code, uid=None):
+    uid = _uid(uid)
     c = conn()
     r = c.execute("""
         SELECT w.*, COALESCE(s.name,'') AS name
-        FROM watch w LEFT JOIN stock s ON s.code=w.code WHERE w.code=?
-    """, (code,)).fetchone()
+        FROM watch w LEFT JOIN stock s ON s.code=w.code
+        WHERE w.user_id=? AND w.code=?
+    """, (uid, code)).fetchone()
     if not r:
         return None
     return {
@@ -248,13 +417,31 @@ def get_watch(code):
         "thesis": r["thesis"] or "",
         "keywords": json.loads(r["keywords"] or "[]"),
         "tags": json.loads(r["tags"] or "[]"),
+        "grp": r["grp"] or "",
     }
 
 
-def del_watch(code):
+def del_watch(code, uid=None):
+    uid = _uid(uid)
     c = conn()
-    c.execute("DELETE FROM watch WHERE code=?", (code,))
+    c.execute("DELETE FROM watch WHERE user_id=? AND code=?", (uid, code))
     c.commit()
+
+
+def reorder_watch(codes, uid=None):
+    """按给定顺序批量写 sort（拖拽排序用）"""
+    uid = _uid(uid)
+    c = conn()
+    for i, code in enumerate(codes):
+        c.execute("UPDATE watch SET sort=? WHERE user_id=? AND code=?", (i, uid, code))
+    c.commit()
+
+
+def all_watch_codes():
+    """公共采集用：所有用户关注过的股票并集（去重），不涉及隐私"""
+    c = conn()
+    rows = c.execute("SELECT DISTINCT code FROM watch").fetchall()
+    return [r["code"] for r in rows]
 
 
 # ---------------- 股票主数据 ----------------
@@ -488,13 +675,14 @@ def search_entries(q, limit=20):
              "level": r["level"]} for r in rows]
 
 
-def rag_context(q, limit=12):
+def rag_context(q, limit=12, uid=None):
     """
     M5 · RAG 检索：为全局 AI 助手收集上下文。
-    组合：关注池 thesis + 全文检索命中的词条 + 各票最新行情。
+    组合：该用户关注池 thesis + 全文检索命中的词条 + 各票最新行情。
     """
+    uid = _uid(uid)
     c = conn()
-    watch = list_watch()
+    watch = list_watch(uid)
 
     # 1) 关键词抽取：q 里的中文词直接 LIKE 命中标题
     hits = []
@@ -563,13 +751,15 @@ def make_cache_key(entry_id, model="", prompt_version="", th_hash=""):
     return f"{entry_id}|{model}|{prompt_version}|{th_hash}"
 
 
-def get_entry_ai(entry_id, model=None, prompt_version=None, th_hash=None):
+def get_entry_ai(entry_id, model=None, prompt_version=None, th_hash=None, uid=None):
     """
-    精确取缓存（版本匹配才返回）。
+    精确取缓存（版本匹配才返回），按 user_id 隔离。
     不传版本参数时退化为旧行为（返回最新一条），仅用于展示。
     """
+    uid = _uid(uid)
     c = conn()
-    r = c.execute("SELECT * FROM entry_ai WHERE entry_id=?", (entry_id,)).fetchone()
+    r = c.execute("SELECT * FROM entry_ai WHERE user_id=? AND entry_id=?",
+                  (uid, entry_id)).fetchone()
     if not r:
         return None
     d = {k: r[k] for k in r.keys()}
@@ -585,68 +775,73 @@ def get_entry_ai(entry_id, model=None, prompt_version=None, th_hash=None):
 
 def save_entry_ai(entry_id, model, summary, why_matters, thesis_impact,
                   read_hint, tokens=0, prompt_version="v0", th_hash="",
-                  extra=None):
+                  extra=None, uid=None):
     """
-    写入缓存 + 归档历史版本（ai_analysis_version 保留全部）。
-    extra: dict，可存七段中的其它段（facts/impact/bullbear/todo/invalidation），JSON 进 content 字段不合适，
-           这里存入 summary 之外的字段留空，完整段落放 chat 表由调用方处理。
+    写入缓存 + 归档历史版本（ai_analysis_version 保留全部），按 user_id 隔离。
     """
+    uid = _uid(uid)
     ckey = make_cache_key(entry_id, model, prompt_version, th_hash)
     c = conn()
     c.execute("""
-        INSERT INTO entry_ai(entry_id,model,summary,why_matters,thesis_impact,
+        INSERT INTO entry_ai(user_id,entry_id,model,summary,why_matters,thesis_impact,
                              read_hint,tokens,created_at,thesis_hash,prompt_version,cache_key)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(entry_id) DO UPDATE SET
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(user_id,entry_id) DO UPDATE SET
           model=excluded.model, summary=excluded.summary,
           why_matters=excluded.why_matters, thesis_impact=excluded.thesis_impact,
           read_hint=excluded.read_hint, tokens=excluded.tokens,
           created_at=excluded.created_at, thesis_hash=excluded.thesis_hash,
           prompt_version=excluded.prompt_version, cache_key=excluded.cache_key
-    """, (entry_id, model, summary, why_matters, thesis_impact, read_hint,
+    """, (uid, entry_id, model, summary, why_matters, thesis_impact, read_hint,
           tokens, now(), th_hash, prompt_version, ckey))
-    # 归档历史（同 cache_key 不重复归档）
-    dup = c.execute("SELECT 1 FROM ai_analysis_version WHERE cache_key=?",
-                    (ckey,)).fetchone()
+    # 归档历史（同一用户下同 cache_key 不重复归档）
+    dup = c.execute("SELECT 1 FROM ai_analysis_version WHERE user_id=? AND cache_key=?",
+                    (uid, ckey)).fetchone()
     if not dup:
         c.execute("""
             INSERT INTO ai_analysis_version
-              (entry_id,cache_key,model,summary,why_matters,thesis_impact,
+              (user_id,entry_id,cache_key,model,summary,why_matters,thesis_impact,
                read_hint,tokens,thesis_hash,prompt_version,created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?)
-        """, (entry_id, ckey, model, summary, why_matters, thesis_impact,
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (uid, entry_id, ckey, model, summary, why_matters, thesis_impact,
               read_hint, tokens, th_hash, prompt_version, now()))
     c.commit()
 
 
-def list_entry_ai_versions(entry_id, limit=10):
+def list_entry_ai_versions(entry_id, limit=10, uid=None):
+    uid = _uid(uid)
     rows = conn().execute("""
         SELECT cache_key, model, thesis_hash, prompt_version, created_at, summary
-        FROM ai_analysis_version WHERE entry_id=?
+        FROM ai_analysis_version WHERE user_id=? AND entry_id=?
         ORDER BY created_at DESC LIMIT ?
-    """, (entry_id, limit)).fetchall()
+    """, (uid, entry_id, limit)).fetchall()
     return [dict(r) for r in rows]
 
 
-def thesis_version(code):
-    """当前 thesis 版本号（历史修改次数 + 1）"""
+def thesis_version(code, uid=None):
+    """当前 thesis 版本号（该用户历史修改次数 + 1）"""
+    uid = _uid(uid)
     r = conn().execute(
-        "SELECT COUNT(*) n FROM thesis_history WHERE code=?", (code,)).fetchone()
+        "SELECT COUNT(*) n FROM thesis_history WHERE user_id=? AND code=?",
+        (uid, code)).fetchone()
     return (r["n"] if r else 0) + 1
 
 
-def save_thesis_change(code, old, new, reason=""):
-    import hashlib
+def save_thesis_change(code, old, new, reason="", uid=None):
+    uid = _uid(uid)
     c = conn()
-    c.execute("""INSERT INTO thesis_history(code,thesis_old,thesis_new,reason,changed_at)
-                 VALUES(?,?,?,?,?)""", (code, old or "", new or "", reason or "", now()))
+    c.execute("""INSERT INTO thesis_history(user_id,code,thesis_old,thesis_new,reason,changed_at)
+                 VALUES(?,?,?,?,?,?)""",
+              (uid, code, old or "", new or "", reason or "", now()))
     c.commit()
 
 
-def list_thesis_history(code, limit=20):
+def list_thesis_history(code, limit=20, uid=None):
+    uid = _uid(uid)
     rows = conn().execute(
-        "SELECT * FROM thesis_history WHERE code=? ORDER BY changed_at DESC LIMIT ?",
-        (code, limit)).fetchall()
+        "SELECT * FROM thesis_history WHERE user_id=? AND code=? "
+        "ORDER BY changed_at DESC LIMIT ?",
+        (uid, code, limit)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -662,15 +857,16 @@ STATUS_LABEL = {
 }
 
 
-def set_entry_state(entry_id, status=None, is_read=None, note=None):
-    """更新词条用户状态（不存在则创建）"""
+def set_entry_state(entry_id, status=None, is_read=None, note=None, uid=None):
+    """更新词条用户状态（不存在则创建），按 user_id 隔离"""
+    uid = _uid(uid)
     c = conn()
-    row = c.execute("SELECT * FROM entry_user_state WHERE entry_id=?",
-                    (entry_id,)).fetchone()
+    row = c.execute("SELECT * FROM entry_user_state WHERE user_id=? AND entry_id=?",
+                    (uid, entry_id)).fetchone()
     if row is None:
         c.execute("""INSERT INTO entry_user_state
-                     (entry_id,status,is_read,note,updated_at) VALUES(?,?,?,?,?)""",
-                  (entry_id, status or "unread", 1 if is_read else 0,
+                     (user_id,entry_id,status,is_read,note,updated_at) VALUES(?,?,?,?,?,?)""",
+                  (uid, entry_id, status or "unread", 1 if is_read else 0,
                    note or "", now()))
     else:
         sets, vals = [], []
@@ -686,47 +882,52 @@ def set_entry_state(entry_id, status=None, is_read=None, note=None):
         if sets:
             sets.append("updated_at=?")
             vals.append(now())
-            vals.append(entry_id)
-            c.execute(f"UPDATE entry_user_state SET {','.join(sets)} WHERE entry_id=?",
-                      vals)
+            vals.extend([uid, entry_id])
+            c.execute(f"UPDATE entry_user_state SET {','.join(sets)} "
+                      f"WHERE user_id=? AND entry_id=?", vals)
     c.commit()
-    return get_entry_state(entry_id)
+    return get_entry_state(entry_id, uid)
 
 
-def get_entry_state(entry_id):
-    r = conn().execute("SELECT * FROM entry_user_state WHERE entry_id=?",
-                       (entry_id,)).fetchone()
+def get_entry_state(entry_id, uid=None):
+    uid = _uid(uid)
+    r = conn().execute(
+        "SELECT * FROM entry_user_state WHERE user_id=? AND entry_id=?",
+        (uid, entry_id)).fetchone()
     if not r:
         return {"entry_id": entry_id, "status": "unread", "is_read": 0,
                 "note": "", "updated_at": None}
     return dict(r)
 
 
-def bulk_set_state(entry_ids, status=None, is_read=None):
+def bulk_set_state(entry_ids, status=None, is_read=None, uid=None):
+    uid = _uid(uid)
     for eid in entry_ids:
-        set_entry_state(eid, status=status, is_read=is_read)
+        set_entry_state(eid, status=status, is_read=is_read, uid=uid)
     return len(entry_ids)
 
 
-def state_map(entry_ids):
+def state_map(entry_ids, uid=None):
     """批量取状态：{entry_id: state}"""
+    uid = _uid(uid)
     if not entry_ids:
         return {}
     qs = ",".join("?" * len(entry_ids))
     rows = conn().execute(
-        f"SELECT * FROM entry_user_state WHERE entry_id IN ({qs})",
-        list(entry_ids)).fetchall()
+        f"SELECT * FROM entry_user_state WHERE user_id=? AND entry_id IN ({qs})",
+        [uid, *entry_ids]).fetchall()
     return {r["entry_id"]: dict(r) for r in rows}
 
 
-def state_counts():
-    """各状态计数（资讯管理页用）"""
+def state_counts(uid=None):
+    """各状态计数（资讯管理页用），按用户隔离"""
+    uid = _uid(uid)
     rows = conn().execute(
-        "SELECT status, COUNT(*) n FROM entry_user_state GROUP BY status").fetchall()
+        "SELECT status, COUNT(*) n FROM entry_user_state WHERE user_id=? GROUP BY status",
+        (uid,)).fetchall()
     out = {k: 0 for k in STATUS_LABEL}
     for r in rows:
         out[r["status"]] = r["n"]
-    # unread = 总数 - 已有状态记录数 + 状态为 unread 的
     total = count_entries()
     marked = sum(v for k, v in out.items() if k != "unread")
     out["unread"] = max(0, total - marked) + out.get("unread", 0)
@@ -735,17 +936,19 @@ def state_counts():
 
 # ---------------- 研究笔记与报告（M6） ----------------
 
-def add_research(code, title, content="", tags="", entry_ids=""):
+def add_research(code, title, content="", tags="", entry_ids="", uid=None):
+    uid = _uid(uid)
     c = conn()
     c.execute("""INSERT INTO research_record
-                 (code,title,content,tags,entry_ids,created_at,updated_at)
-                 VALUES(?,?,?,?,?,?,?)""",
-              (code, title, content, tags, entry_ids, now(), now()))
+                 (user_id,code,title,content,tags,entry_ids,created_at,updated_at)
+                 VALUES(?,?,?,?,?,?,?,?)""",
+              (uid, code, title, content, tags, entry_ids, now(), now()))
     c.commit()
     return c.execute("SELECT last_insert_rowid() id").fetchone()["id"]
 
 
-def update_research(rid, title=None, content=None, tags=None, entry_ids=None):
+def update_research(rid, title=None, content=None, tags=None, entry_ids=None, uid=None):
+    uid = _uid(uid)
     c = conn()
     sets, vals = [], []
     if title is not None:
@@ -758,23 +961,26 @@ def update_research(rid, title=None, content=None, tags=None, entry_ids=None):
         sets.append("entry_ids=?"); vals.append(entry_ids)
     if sets:
         sets.append("updated_at=?"); vals.append(now())
-        vals.append(rid)
-        c.execute(f"UPDATE research_record SET {','.join(sets)} WHERE id=?", vals)
+        vals.extend([rid, uid])
+        c.execute(f"UPDATE research_record SET {','.join(sets)} "
+                  f"WHERE id=? AND user_id=?", vals)
         c.commit()
         return True
     return False
 
 
-def delete_research(rid):
+def delete_research(rid, uid=None):
+    uid = _uid(uid)
     c = conn()
-    c.execute("DELETE FROM research_record WHERE id=?", (rid,))
+    c.execute("DELETE FROM research_record WHERE id=? AND user_id=?", (rid, uid))
     c.commit()
 
 
-def list_research(code="", q="", limit=50, offset=0):
-    """code 为空时列出全部；q 支持标题/内容/标签 LIKE"""
+def list_research(code="", q="", limit=50, offset=0, uid=None):
+    """code 为空时列出该用户全部；q 支持标题/内容/标签 LIKE"""
+    uid = _uid(uid)
     c = conn()
-    where, vals = ["1=1"], []
+    where, vals = ["user_id=?"], [uid]
     if code:
         where.append("code=?"); vals.append(code)
     if q:
@@ -787,23 +993,28 @@ def list_research(code="", q="", limit=50, offset=0):
     return [dict(r) for r in rows]
 
 
-def get_research(rid):
-    r = conn().execute("SELECT * FROM research_record WHERE id=?", (rid,)).fetchone()
+def get_research(rid, uid=None):
+    uid = _uid(uid)
+    r = conn().execute("SELECT * FROM research_record WHERE id=? AND user_id=?",
+                       (rid, uid)).fetchone()
     return dict(r) if r else None
 
 
-def save_report(kind, title, content, code="", meta="", period=""):
+def save_report(kind, title, content, code="", meta="", period="", uid=None):
+    uid = _uid(uid)
     c = conn()
     c.execute("""INSERT INTO research_report
-                 (kind,code,title,content,meta,period,created_at) VALUES(?,?,?,?,?,?,?)""",
-              (kind, code, title, content, meta, period, now()))
+                 (user_id,kind,code,title,content,meta,period,created_at)
+                 VALUES(?,?,?,?,?,?,?,?)""",
+              (uid, kind, code, title, content, meta, period, now()))
     c.commit()
     return c.execute("SELECT last_insert_rowid() id").fetchone()["id"]
 
 
-def list_reports(kind="", code="", period="", limit=30, offset=0):
+def list_reports(kind="", code="", period="", limit=30, offset=0, uid=None):
+    uid = _uid(uid)
     c = conn()
-    where, vals = ["1=1"], []
+    where, vals = ["user_id=?"], [uid]
     if kind:
         where.append("kind=?"); vals.append(kind)
     if code:
@@ -817,9 +1028,18 @@ def list_reports(kind="", code="", period="", limit=30, offset=0):
     return [dict(r) for r in rows]
 
 
-def get_report(rid):
-    r = conn().execute("SELECT * FROM research_report WHERE id=?", (rid,)).fetchone()
+def get_report(rid, uid=None):
+    uid = _uid(uid)
+    r = conn().execute("SELECT * FROM research_report WHERE id=? AND user_id=?",
+                       (rid, uid)).fetchone()
     return dict(r) if r else None
+
+
+def delete_report(rid, uid=None):
+    uid = _uid(uid)
+    c = conn()
+    c.execute("DELETE FROM research_report WHERE id=? AND user_id=?", (rid, uid))
+    c.commit()
 
 
 def monthly_window(period):
@@ -836,21 +1056,32 @@ def monthly_window(period):
 
 # ---------------- chat ----------------
 
-def add_chat(scope, role, content):
-    cid = hashlib.sha1(f"{scope}|{role}|{content}|{time.time()}".encode()).hexdigest()
+def add_chat(scope, role, content, uid=None):
+    uid = _uid(uid)
+    cid = hashlib.sha1(f"{uid}|{scope}|{role}|{content}|{time.time()}".encode()).hexdigest()
     c = conn()
-    c.execute("INSERT INTO chat(id,scope,role,content,created_at) VALUES(?,?,?,?,?)",
-              (cid, scope, role, content, now()))
+    c.execute("INSERT INTO chat(id,scope,role,content,created_at,user_id) "
+              "VALUES(?,?,?,?,?,?)",
+              (cid, scope, role, content, now(), uid))
     c.commit()
     return cid
 
 
-def list_chat(scope, limit=50):
+def list_chat(scope, limit=50, uid=None):
+    uid = _uid(uid)
     rows = conn().execute(
-        "SELECT * FROM chat WHERE scope=? ORDER BY created_at DESC LIMIT ?",
-        (scope, limit)).fetchall()
+        "SELECT * FROM chat WHERE user_id=? AND scope=? ORDER BY created_at DESC LIMIT ?",
+        (uid, scope, limit)).fetchall()
     return [{"role": r["role"], "content": r["content"],
              "created_at": r["created_at"]} for r in reversed(rows)]
+
+
+def clear_chat(scope, uid=None):
+    uid = _uid(uid)
+    c = conn()
+    c.execute("DELETE FROM chat WHERE user_id=? AND scope=?", (uid, scope))
+    c.commit()
+    return True
 
 
 # ---------------- 行情 ----------------

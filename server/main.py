@@ -3,6 +3,7 @@
 import asyncio
 import io
 import json
+import os
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -17,7 +18,7 @@ from invest_radar import analyzer, config, fetcher, store, sync
 from invest_radar.universe import update_universe
 from invest_radar import watcher
 from invest_radar.websearch import web_search
-from server import auth_routes, quotes, security, sse
+from server import auth_routes, identity, quotes, sse, usersecret
 from server.llm import client as llm
 from server.llm import prompts
 
@@ -28,7 +29,7 @@ DATA_ACTION_TIMEOUT = 180
 @asynccontextmanager
 async def lifespan(app):
     store.init()
-    security.prune_sessions()      # M3: 清理过期会话
+    identity.prune_sessions()      # M3: 清理过期会话
     await quotes.start()           # M5: 共享行情轮询
     # 主数据过期就后台补（不阻塞启动）
     try:
@@ -42,27 +43,46 @@ async def lifespan(app):
 app = FastAPI(title="投资雷达", version="2.0.0", lifespan=lifespan)
 
 # M1: CORS 收敛——只允许本机与 Tailscale 域名
+# M8: 允许网页域名 + Capacitor WebView 的 origin（APK 走 Bearer，不依赖 Cookie）
+_ALLOWED = [
+    o.strip() for o in os.environ.get(
+        "RADAR_ALLOWED_ORIGINS",
+        "http://127.0.0.1:8000,http://localhost:8000,http://localhost:5173,"
+        "https://you.xn--6or.gay,https://localhost,capacitor://localhost",
+    ).split(",") if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:8000",
-        "http://localhost:8000",
-        "https://rancho.duiker-ling.ts.net",
-    ],
+    allow_origins=_ALLOWED,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "Authorization", "X-Radar-Token"],
+    expose_headers=["Content-Disposition"],
 )
 
 
 @app.middleware("http")
 async def auth_guard(request: Request, call_next):
-    """M1: 全局认证闸门（公共路径与静态资源放行）"""
-    if not security.is_public(request) and request.method != "OPTIONS":
-        if not security.valid_session(request.cookies.get(security.COOKIE)):
-            return JSONResponse({"ok": False, "msg": "未登录",
-                                 "detail": "unauthorized"}, status_code=401)
-    return await call_next(request)
+    """
+    M8: 身份闸门。
+    · 公共路径放行
+    · 其余路径从 Cookie / Bearer 解析 uid，写入 contextvar，
+      之后 store 层默认按该 uid 过滤（见 invest_radar/ctx.py）
+    · 解析失败直接 401，请求体里传什么 user_id 都不会被采信
+    """
+    from invest_radar import ctx
+    if request.method == "OPTIONS" or identity.is_public(request):
+        return await call_next(request)
+    uid = identity.resolve_session(identity.token_from_request(request))
+    if not uid:
+        return JSONResponse({"ok": False, "msg": "未登录",
+                             "detail": "unauthorized"}, status_code=401)
+    token = ctx.set_uid(uid)
+    try:
+        return await call_next(request)
+    finally:
+        ctx.reset(token)
 
 
 app.include_router(auth_routes.router)
@@ -76,6 +96,16 @@ def ok(data):
 
 def fail(msg, code=400):
     raise HTTPException(status_code=code, detail=msg)
+
+
+def _model(kind="cheap"):
+    """M8: 模型按用户设置取；用户没设就用默认。"""
+    from invest_radar import ctx
+    try:
+        cheap, strong = usersecret.models(ctx.current_uid())
+    except Exception:
+        cheap, strong = llm.MODEL_CHEAP, llm.MODEL_STRONG
+    return strong if kind == "strong" else cheap
 
 
 def _fmt_entry(e):
@@ -165,6 +195,17 @@ def api_watch_add(w: WatchIn):
 def api_watch_del(code: str):
     store.del_watch(code)
     return ok({"code": code, "deleted": True})
+
+
+class ReorderIn(BaseModel):
+    codes: list[str]
+
+
+@app.put("/api/watch/reorder")
+def api_watch_reorder(body: ReorderIn):
+    """拖拽排序：按传入顺序写 sort（只影响自己）"""
+    store.reorder_watch(body.codes[:200])
+    return ok({"updated": len(body.codes[:200])})
 
 
 # ---------------- 搜索 ----------------
@@ -335,7 +376,10 @@ async def stream_quotes(codes: str = ""):
     """
     code_list = [c.strip() for c in codes.split(",") if c.strip()]
     if not code_list:
-        code_list = [w["code"] for w in store.list_watch()]
+        # 显式取当前用户的关注池（不依赖生成器上下文）
+        from invest_radar import ctx as _ctx
+        uid = _ctx.current_uid()
+        code_list = [w["code"] for w in store.list_watch(uid)]
 
     sid, queue = quotes.subscribe(code_list)
 
@@ -440,7 +484,7 @@ async def api_entry_ai(eid: str, force: bool = False):
     th_hash = store.thesis_hash(stock.get("thesis"))
     thesis_ver = store.thesis_version(e["code"])
 
-    cached = store.get_entry_ai(eid, model=llm.MODEL_CHEAP,
+    cached = store.get_entry_ai(eid, model=_model("cheap"),
                                 prompt_version=llm.PROMPT_VERSION,
                                 th_hash=th_hash)
     if cached and not force:
@@ -487,12 +531,12 @@ async def api_entry_ai(eid: str, force: bool = False):
         messages = prompts.entry_messages(stock, e, e.get("content"),
                                           quote=quote, freshness=freshness,
                                           thesis_ver=thesis_ver)
-        yield sse.ev_start(model=llm.MODEL_CHEAP,
+        yield sse.ev_start(model=_model("cheap"),
                            prompt_version=llm.PROMPT_VERSION)
         buf = []
         usage = {}
         try:
-            async for piece in llm.chat_stream(messages, model=llm.MODEL_CHEAP,
+            async for piece in llm.chat_stream(messages, model=_model("cheap"),
                                                max_tokens=1200, usage_out=usage):
                 buf.append(piece)
                 yield sse.ev_chunk(piece)
@@ -510,7 +554,7 @@ async def api_entry_ai(eid: str, force: bool = False):
             yield sse.ev_segment(key, label, text)
 
         store.save_entry_ai(
-            eid, llm.MODEL_CHEAP,
+            eid, _model("cheap"),
             d.get("conclusion", ""), d.get("impact", ""),
             d.get("thesis_impact", ""), d.get("todo", ""),
             usage.get("tokens", 0), llm.PROMPT_VERSION, th_hash)
@@ -551,7 +595,7 @@ async def api_entry_chat(eid: str, body: ChatIn):
         buf = []
         try:
             async for piece in llm.chat_stream(
-                    messages, model=body.model or llm.MODEL_STRONG,
+                    messages, model=body.model or _model("strong"),
                     max_tokens=1000):
                 buf.append(piece)
                 yield sse.ev_chunk(piece)
@@ -599,7 +643,7 @@ async def api_ai_batch(body: BatchIn):
         yield sse.ev_start(count=len(entries))
         buf = []
         try:
-            async for piece in llm.chat_stream(messages, model=llm.MODEL_CHEAP,
+            async for piece in llm.chat_stream(messages, model=_model("cheap"),
                                                max_tokens=900):
                 buf.append(piece)
                 yield sse.ev_chunk(piece)
@@ -708,7 +752,7 @@ async def api_ai_daily_brief():
         try:
             async for piece in llm.chat_stream(
                     [{"role": "user", "content": prompt}],
-                    model=llm.MODEL_CHEAP, max_tokens=1000):
+                    model=_model("cheap"), max_tokens=1000):
                 buf.append(piece)
                 yield sse.ev_chunk(piece)
         except llm.LLMError as ex:
@@ -727,7 +771,7 @@ async def api_ai_daily_brief():
             store.save_report(kind="daily_brief", code="",
                               title=f"晨报 {datetime.now().strftime('%Y-%m-%d')}",
                               content=content,
-                              meta=json.dumps({"model": llm.MODEL_CHEAP},
+                              meta=json.dumps({"model": _model("cheap")},
                                               ensure_ascii=False))
         except Exception:
             pass
@@ -972,7 +1016,7 @@ async def api_ai_today_focus():
         try:
             async for piece in llm.chat_stream(
                     [{"role": "user", "content": prompt}],
-                    model=llm.MODEL_CHEAP, max_tokens=900):
+                    model=_model("cheap"), max_tokens=900):
                 buf.append(piece)
                 yield sse.ev_chunk(piece)
         except llm.LLMError as ex:
@@ -1057,7 +1101,7 @@ async def api_ai_global(body: GlobalChatIn):
         msgs.append({"role": "user", "content": q})
         buf = []
         try:
-            async for piece in llm.chat_stream(msgs, model=llm.MODEL_CHEAP,
+            async for piece in llm.chat_stream(msgs, model=_model("cheap"),
                                                max_tokens=900):
                 buf.append(piece)
                 yield sse.ev_chunk(piece)
@@ -1166,7 +1210,7 @@ async def api_stock_debate(code: str):
         # 阶段一：看多
         yield sse.ev_progress("bull", detail="看多研究员")
         try:
-            async for piece in llm.chat_stream(stage1, model=llm.MODEL_CHEAP,
+            async for piece in llm.chat_stream(stage1, model=_model("cheap"),
                                                max_tokens=500):
                 bull_text += piece
                 yield sse._pack("bull", text=piece)
@@ -1177,7 +1221,7 @@ async def api_stock_debate(code: str):
         # 阶段二：看空
         yield sse.ev_progress("bear", detail="看空研究员")
         try:
-            async for piece in llm.chat_stream(stage2, model=llm.MODEL_CHEAP,
+            async for piece in llm.chat_stream(stage2, model=_model("cheap"),
                                                max_tokens=500):
                 bear_text += piece
                 yield sse._pack("bear", text=piece)
@@ -1191,7 +1235,7 @@ async def api_stock_debate(code: str):
                                        quote=quote_obj)
         judge = []
         try:
-            async for piece in llm.chat_stream(jmsgs, model=llm.MODEL_CHEAP,
+            async for piece in llm.chat_stream(jmsgs, model=_model("cheap"),
                                                max_tokens=700):
                 judge.append(piece)
                 yield sse._pack("judge", text=piece)
@@ -1209,7 +1253,7 @@ async def api_stock_debate(code: str):
                 kind="debate", code=code,
                 title=f"{name} 多空辩论 {datetime.now().strftime('%m-%d')}",
                 content=f"【看多】\n{bull_text}\n\n【看空】\n{bear_text}\n\n【裁决】\n{''.join(judge)}",
-                meta=json.dumps({"model": llm.MODEL_CHEAP}, ensure_ascii=False))
+                meta=json.dumps({"model": _model("cheap")}, ensure_ascii=False))
         except Exception:
             pass
         yield sse.ev_done()
@@ -1227,8 +1271,18 @@ async def api_websearch(q: str, limit: int = 10):
     return ok(r[:limit])
 
 
+class ThesisIn(BaseModel):
+    """M8: code 由路径给，body 只需 thesis（兼容旧前端多传 code 也不报错）"""
+    thesis: str | None = None
+    keywords: list[str] | None = None
+    role: str | None = None
+    tags: list[str] | None = None
+    reason: str | None = None
+    code: str | None = None
+
+
 @app.put("/api/watch/{code}/thesis")
-def api_update_thesis(code: str, w: WatchIn):
+def api_update_thesis(code: str, w: ThesisIn):
     """M4: 在线编辑 thesis，旧值写入 thesis_history（AI 缓存随之失效）"""
     exist = store.get_watch(code)
     if not exist:
@@ -1239,7 +1293,7 @@ def api_update_thesis(code: str, w: WatchIn):
                        role=w.role, tags=w.tags)
     if (new or "").strip() != (old or "").strip():
         store.save_thesis_change(code, old, new, w.reason or "")
-    return ok({**store.get_watch(code),
+    return ok({**(store.get_watch(code) or {}),
                "thesis_version": store.thesis_version(code)})
 
 
@@ -1445,7 +1499,7 @@ async def api_monthly_review(body: dict):
         try:
             async for piece in llm.chat_stream(
                     [{"role": "user", "content": prompt}],
-                    model=llm.MODEL_CHEAP, max_tokens=1200):
+                    model=_model("cheap"), max_tokens=1200):
                 buf.append(piece)
                 yield sse.ev_chunk(piece)
         except llm.LLMError as ex:
@@ -1459,7 +1513,7 @@ async def api_monthly_review(body: dict):
             kind="monthly_review", code=code,
             title=f"{stock.get('name') or code} · {period} 月度复盘",
             content=content, period=period,
-            meta=json.dumps({"entries": len(rows), "model": llm.MODEL_CHEAP},
+            meta=json.dumps({"entries": len(rows), "model": _model("cheap")},
                             ensure_ascii=False))
         yield sse.ev_done(report_id=rid)
 
@@ -1469,20 +1523,26 @@ async def api_monthly_review(body: dict):
 
 @app.get("/api/ai/status")
 def api_ai_status():
-    """1.0 兼容端点：key 状态（前端已改用 /api/ai/usage）"""
+    """1.0 兼容端点：该用户是否已配 Key"""
     return ok({"available": llm.available(), "prompt_version": llm.PROMPT_VERSION})
 
 
 @app.get("/api/ai/usage")
 def api_ai_usage():
-    """成本面板：AI 缓存条数、chat 轮次、按模型估算 token 成本"""
+    """成本面板：只统计当前用户自己的用量"""
+    from invest_radar import ctx
+    uid = ctx.current_uid()
     c = store.conn()
-    n_cache = c.execute("SELECT COUNT(*) n FROM entry_ai").fetchone()["n"]
+    n_cache = c.execute("SELECT COUNT(*) n FROM entry_ai WHERE user_id=?",
+                        (uid,)).fetchone()["n"]
     n_chat = c.execute(
-        "SELECT COUNT(*) n FROM chat WHERE role='user'").fetchone()["n"]
-    n_chat_msg = c.execute("SELECT COUNT(*) n FROM chat").fetchone()["n"]
+        "SELECT COUNT(*) n FROM chat WHERE user_id=? AND role='user'",
+        (uid,)).fetchone()["n"]
+    n_chat_msg = c.execute("SELECT COUNT(*) n FROM chat WHERE user_id=?",
+                           (uid,)).fetchone()["n"]
     models = c.execute(
-        "SELECT model, COUNT(*) n FROM entry_ai GROUP BY model").fetchall()
+        "SELECT model, COUNT(*) n FROM entry_ai WHERE user_id=? GROUP BY model",
+        (uid,)).fetchall()
     # 估算（deepseek-chat 输入1元/1M 输出2元/1M；解读约 in 900 + out 500 tok）
     est_calls = n_cache + n_chat
     est_tokens = est_calls * 1400
@@ -1499,6 +1559,67 @@ def api_ai_usage():
     })
 
 
+# ---------------- M8 · 每个人的 DeepSeek Key ----------------
+
+class KeyIn(BaseModel):
+    api_key: str
+
+
+class AiSettingsIn(BaseModel):
+    model_cheap: str | None = None
+    model_strong: str | None = None
+    ai_enabled: bool | None = None
+
+
+@app.get("/api/me/key")
+def api_get_key():
+    """只返回是否已配 + 脱敏提示，绝不返回明文"""
+    from invest_radar import ctx
+    return ok(usersecret.get_public(ctx.current_uid()))
+
+
+@app.put("/api/me/key")
+def api_put_key(body: KeyIn):
+    from invest_radar import ctx
+    uid = ctx.current_uid()
+    try:
+        return ok(usersecret.save_key(uid, body.api_key))
+    except ValueError as e:
+        fail(str(e), 400)
+
+
+@app.delete("/api/me/key")
+def api_del_key():
+    from invest_radar import ctx
+    return ok(usersecret.delete_key(ctx.current_uid()))
+
+
+@app.post("/api/me/key/test")
+async def api_test_key():
+    """用该用户自己的 Key 发一次最小请求，验证连通性"""
+    from invest_radar import ctx
+    uid = ctx.current_uid()
+    if not llm.available(uid):
+        fail("还没配置 Key", 400)
+    try:
+        r = await llm.chat(
+            [{"role": "user", "content": "回复两个字：可用"}],
+            model=_model("cheap"), max_tokens=16, timeout=30, uid=uid)
+        usersecret.mark_tested(uid, True)
+        return ok({"ok": True, "reply": (r.get("text") or "")[:40],
+                   "tokens": r.get("tokens", 0)})
+    except llm.LLMError as e:
+        usersecret.mark_tested(uid, False)
+        return {"ok": False, "msg": f"{e.kind}: {e}"}
+
+
+@app.put("/api/me/ai-settings")
+def api_put_ai_settings(body: AiSettingsIn):
+    from invest_radar import ctx
+    return ok(usersecret.save_settings(
+        ctx.current_uid(), body.model_cheap, body.model_strong, body.ai_enabled))
+
+
 @app.get("/api/chat/global")
 def api_chat_global(limit: int = 30):
     return ok(store.list_chat("global", limit))
@@ -1506,9 +1627,7 @@ def api_chat_global(limit: int = 30):
 
 @app.delete("/api/chat/global")
 def api_chat_global_clear():
-    c = store.conn()
-    c.execute("DELETE FROM chat WHERE scope='global'")
-    c.commit()
+    store.clear_chat("global")
     return ok({"cleared": True})
 
 

@@ -13,6 +13,7 @@ M5 · 共享行情轮询器
 """
 import asyncio
 import logging
+import secrets
 import time
 from datetime import datetime
 
@@ -22,6 +23,8 @@ log = logging.getLogger("quotes")
 
 # 订阅者：{subscriber_id: asyncio.Queue}
 _subs: dict[str, asyncio.Queue] = {}
+# M8: 每个订阅者要看的代码，释放订阅时据此精确回收 _wanted
+_sub_codes: dict[str, set[str]] = {}
 # 行情缓存：{code: {price, pct, pe, pb, mcap, vol_ratio, ts, stale}}
 _cache: dict[str, dict] = {}
 # 正在被关注/订阅的代码（动态集合）
@@ -29,7 +32,8 @@ _wanted: set[str] = set()
 _task: asyncio.Task | None = None
 _lock = asyncio.Lock()
 
-MAX_SUBS = 32            # 最大订阅数（单人使用远够）
+MAX_SUBS = 128           # M8: 多用户，放宽订阅上限
+
 STATS = {"polls": 0, "pushes": 0, "errors": 0, "last_poll": 0, "last_error": ""}
 
 
@@ -52,49 +56,77 @@ def subscribe(codes: list[str]) -> tuple[str, asyncio.Queue]:
     """注册订阅者，返回 (sid, queue)。首帧由调用方从 snapshot 取。"""
     if len(_subs) >= MAX_SUBS:
         raise RuntimeError("订阅数已达上限")
-    sid = f"sub_{int(time.time()*1000)}_{len(_subs)}"
+    sid = f"sub_{int(time.time()*1000)}_{len(_subs)}_{secrets.token_hex(2)}"
     q: asyncio.Queue = asyncio.Queue(maxsize=64)
     _subs[sid] = q
-    for c in codes:
-        _wanted.add(c)
+    _sub_codes[sid] = set(codes)
+    _wanted.update(codes)
     return sid, q
 
 
 def unsubscribe(sid: str):
+    """
+    释放订阅（M8）。
+    只回收"没有其他订阅者、且不在任何用户关注池里"的代码，
+    避免多人同时在用时把别人要看的票摘掉。
+    """
     _subs.pop(sid, None)
-    # 没有订阅者引用该票时从 wanted 移除（保留关注池内的票）
-    still_needed = set()
-    for c in _wanted:
-        # 关注池里的票始终保留
-        pass
-    watch_codes = {w["code"] for w in store.list_watch()}
-    _wanted &= watch_codes
+    mine = _sub_codes.pop(sid, set())
+    if not mine:
+        return
+    still_by_subs = set()
+    for codes in _sub_codes.values():
+        still_by_subs |= codes
+    try:
+        watch_codes = set(store.all_watch_codes())
+    except Exception:
+        watch_codes = set()
+    keep = watch_codes | still_by_subs
+    _wanted -= (mine - keep)
+
+
+def _broadcast_to(sid: str, payloads: list[dict]) -> int:
+    """只推给订阅了这些代码的连接，避免把 A 的票推给 B"""
+    q = _subs.get(sid)
+    if q is None:
+        return 0
+    mine = _sub_codes.get(sid, set())
+    n = 0
+    for p in payloads:
+        if p.get("code") not in mine:
+            continue
+        try:
+            q.put_nowait(p)
+            n += 1
+        except asyncio.QueueFull:
+            try:
+                q.get_nowait()
+                q.put_nowait(p)
+                n += 1
+            except Exception:
+                pass
+    return n
 
 
 async def _broadcast(payloads: list[dict]):
-    """向所有订阅者推送（队列满则丢弃最旧）"""
+    """按订阅关系定向推送（M8：不再广播给所有人）"""
     if not payloads:
         return
     dead = []
-    for sid, q in list(_subs.items()):
-        for p in payloads:
-            try:
-                q.put_nowait(p)
-            except asyncio.QueueFull:
-                try:
-                    q.get_nowait()      # 丢最旧
-                    q.put_nowait(p)
-                except Exception:
-                    dead.append(sid)
-                    break
+    for sid in list(_subs.keys()):
+        if _subs.get(sid) is None:
+            dead.append(sid)
+            continue
+        _broadcast_to(sid, payloads)
     for sid in dead:
         _subs.pop(sid, None)
+        _sub_codes.pop(sid, None)
     STATS["pushes"] += len(payloads)
 
 
 async def _poll_once():
     """抓一轮 wanted 里的票（串行，遵循抓取红线）"""
-    codes = list(_wanted) or [w["code"] for w in store.list_watch()]
+    codes = list(_wanted) or store.all_watch_codes()
     if not codes:
         return
     changed = []

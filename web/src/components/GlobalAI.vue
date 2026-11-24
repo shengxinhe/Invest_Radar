@@ -33,6 +33,7 @@
 
 <script setup>
 import { ref, onMounted, nextTick } from "vue";
+import { API_BASE, authHeaders } from "../env.js";
 import { api, req as rawReq } from "../api.js";
 
 const messages = ref([]);
@@ -56,7 +57,9 @@ async function ask() {
   streaming.value = true;
   streamText.value = "";
   try {
-    const res = await fetch("/api/ai/global", {
+    const res = await fetch(`${API_BASE}/api/ai/global`, {
+      headers: authHeaders(),
+      credentials: "include",
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question, web: webOn.value }),

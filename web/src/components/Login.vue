@@ -6,86 +6,100 @@
         <span>投资雷达</span>
       </div>
 
-      <div v-if="!configured" class="login-tip">
-        首次使用，请设置访问口令（至少 8 位）。
+      <div class="login-tip">
+        {{ isFirst ? "第一次来？输入一个名字就能开始，不用密码。" : "输入你的名字进入" }}
       </div>
-      <div v-else class="login-tip">请输入访问口令</div>
 
       <input
-        v-model="pw"
-        type="password"
-        :placeholder="configured ? '口令' : '设置口令'"
+        v-model="name"
+        type="text"
+        placeholder="你的名字（下次用同一个）"
         class="login-input"
-        @keyup.enter="submit"
-        autocomplete="current-password"
-      />
-      <input
-        v-if="!configured"
-        v-model="pw2"
-        type="password"
-        placeholder="再输一次"
-        class="login-input"
+        maxlength="24"
+        autocomplete="username"
+        autocapitalize="off"
         @keyup.enter="submit"
       />
 
-      <button class="login-btn" :disabled="busy" @click="submit">
-        {{ busy ? "处理中…" : configured ? "登录" : "设置并进入" }}
+      <!-- 已有人名：点一下直接进入，少打字 -->
+      <div v-if="known.length" class="known">
+        <span class="known-label">最近用过：</span>
+        <button
+          v-for="u in known"
+          :key="u.name"
+          class="known-chip"
+          :disabled="busy"
+          @click="pick(u.name)"
+        >{{ u.name }}</button>
+      </div>
+
+      <button class="login-btn" :disabled="busy || !name.trim()" @click="submit">
+        {{ busy ? "进入中…" : "进入" }}
       </button>
 
       <div v-if="err" class="login-err">{{ err }}</div>
-      <div class="login-note">仅限个人使用 · 数据不出本机</div>
+      <div class="login-note">名字即身份 · 数据互相隔离 · 无需密码</div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
+import { API_BASE, setToken } from "../env.js";
 
 const emit = defineEmits(["authed"]);
 
-const pw = ref("");
-const pw2 = ref("");
-const configured = ref(true);
+const name = ref("");
 const busy = ref(false);
 const err = ref("");
+const known = ref([]);
+const hasUsers = ref(false);
+
+const isFirst = computed(() => !hasUsers.value && !known.value.length);
 
 async function check() {
   try {
-    const r = await fetch("/api/auth/status").then((x) => x.json());
-    const d = r.data || {};
-    // 认证已关闭：直接进入，不显示登录页
-    if (d.auth_disabled) {
-      emit("authed");
+    const r = await fetch(`${API_BASE}/api/auth/status`).then((x) => x.json());
+    hasUsers.value = !!r.data?.has_users;
+    if (r.data?.authenticated) {
+      // 已登录（Cookie 仍在），直接进
+      emit("authed", { name: r.data.user });
       return;
     }
-    configured.value = d.configured ?? true;
-    if (d.authenticated) emit("authed");
   } catch {}
+  try {
+    const r = await fetch(`${API_BASE}/api/auth/users`).then((x) => x.json());
+    known.value = (r.data || []).slice(0, 6);
+  } catch {}
+}
+
+function pick(n) {
+  name.value = n;
+  submit();
 }
 
 async function submit() {
   err.value = "";
-  if (!pw.value) return;
-  if (!configured.value && pw.value !== pw2.value) {
-    err.value = "两次输入不一致";
-    return;
-  }
+  const n = name.value.trim();
+  if (!n || busy.value) return;
   busy.value = true;
   try {
-    const path = configured.value ? "/api/auth/login" : "/api/auth/setup";
-    const r = await fetch(path, {
+    const res = await fetch(`${API_BASE}/api/auth/enter`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: pw.value }),
+      credentials: "include",
+      body: JSON.stringify({ name: n }),
     });
-    const j = await r.json();
+    const j = await res.json();
     if (j.ok) {
-      emit("authed");
+      // APK 走 Bearer；浏览器同时也有 Cookie
+      if (j.data?.token) setToken(j.data.token);
+      emit("authed", { name: j.data?.name, created: j.data?.created });
     } else {
-      err.value = j.msg || "失败";
+      err.value = j.msg || "进入失败";
     }
   } catch (e) {
-    err.value = "网络错误";
+    err.value = "网络错误，请检查连接";
   } finally {
     busy.value = false;
   }
@@ -142,11 +156,28 @@ onMounted(check);
   border-radius: 10px;
   padding: 12px 13px;
   outline: none;
-  font-size: 14px;
+  font-size: 15px;
   margin-bottom: 10px;
   color: var(--text);
 }
 .login-input:focus { border-color: rgba(94, 234, 212, 0.5); }
+.known {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 12px;
+}
+.known-label { color: var(--text-2); font-size: 11.5px; }
+.known-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(94, 234, 212, 0.12);
+  border: 1px solid rgba(94, 234, 212, 0.3);
+  color: var(--accent);
+  font-size: 12.5px;
+}
+.known-chip:disabled { opacity: 0.5; }
 .login-btn {
   width: 100%;
   padding: 12px;
@@ -157,7 +188,7 @@ onMounted(check);
   font-size: 14px;
   margin-top: 4px;
 }
-.login-btn:disabled { opacity: 0.5; }
+.login-btn:disabled { opacity: 0.45; }
 .login-err {
   color: #ff5c7a;
   font-size: 12.5px;

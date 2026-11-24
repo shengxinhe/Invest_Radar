@@ -28,6 +28,7 @@
 <script setup>
 import { ref, onMounted } from "vue";
 
+import { API_BASE, authHeaders } from "../env.js";
 const props = defineProps({ item: Object });
 defineEmits(["close"]);
 
@@ -40,7 +41,7 @@ async function run() {
   error.value = "";
   text.value = "";
   try {
-    const res = await fetch(`/api/entry/${props.item.id}/ai`, { method: "POST" });
+    const res = await fetch(`${API_BASE}/api/entry/${props.item.id}/ai`, { method: "POST", headers: authHeaders(), credentials: "include" });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       throw new Error(j.detail || `HTTP ${res.status}`);

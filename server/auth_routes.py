@@ -1,17 +1,32 @@
 # -*- coding: utf-8 -*-
-"""M1 · 认证路由（登录/登出/状态/首次设置口令）"""
-import os
+"""
+M8 · 认证路由（名字即账户，无密码）
+
+接口
+----
+GET  /api/auth/status   公开：是否已有用户、当前是否已识别身份
+GET  /api/auth/users    公开：最近活跃的几个名字（登录页提示用）
+POST /api/auth/enter    {name} → 进入（不存在则创建）
+GET  /api/auth/me       需登录：当前身份 + 是否配了自己的 Key
+POST /api/auth/logout   需登录：退出
+PUT  /api/auth/me       {name} → 改名（保留 user_id，不丢数据）
+"""
+import time
 
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel
 
-from . import security as sec
+from . import identity as ident
 
 router = APIRouter()
 
 
-class LoginIn(BaseModel):
-    password: str
+class EnterIn(BaseModel):
+    name: str
+
+
+class RenameIn(BaseModel):
+    name: str
 
 
 def _client_ip(request: Request) -> str:
@@ -19,64 +34,107 @@ def _client_ip(request: Request) -> str:
             or (request.client.host if request.client else "unknown"))
 
 
+def _set_session(response: Response, token: str):
+    """Cookie 给网页；token 同时在响应体返回给 APK"""
+    response.set_cookie(
+        ident.COOKIE, token, max_age=ident.SESSION_TTL,
+        httponly=True, samesite="lax", path="/",
+        # 生产环境走 HTTPS，由 Caddy 终止；secure 在本地 http 下要关，
+        # 所以按请求是否 https 动态设置，见下面 _cookie_secure
+    )
+
+
+def _cookie_secure(request: Request) -> bool:
+    proto = (request.headers.get("x-forwarded-proto") or "").lower()
+    return proto == "https" or request.url.scheme == "https"
+
+
 @router.get("/api/auth/status")
 def auth_status(request: Request):
-    """公开：告知前端是否已配置口令、当前是否已登录"""
+    uid = ident.resolve_session(ident.token_from_request(request))
+    total = len(ident.list_users(limit=999))
     return {
         "ok": True,
         "data": {
-            "configured": sec.password_configured(),
-            "authenticated": sec.valid_session(request.cookies.get(sec.COOKIE)),
-            "auth_disabled": not sec.auth_enabled(),   # M8: 前端据此跳过登录页
+            "has_users": total > 0,
+            "user_count": total,
+            "authenticated": bool(uid),
+            "user": ident.get_user(uid)["name"] if uid else None,
         },
     }
 
 
-@router.post("/api/auth/setup")
-def auth_setup(body: LoginIn, request: Request, response: Response):
-    """首次设置口令（仅在未配置时允许，设置后立即登录）"""
-    if sec.password_configured():
-        return {"ok": False, "msg": "口令已设置，请使用登录"}
-    pw = (body.password or "").strip()
-    if len(pw) < 8:
-        return {"ok": False, "msg": "口令至少 8 位"}
-    h = sec.hash_password(pw)
-    # 写入 .env（持久化）
-    root = sec.DATA_DIR.parent
-    env = root / ".env"
-    lines = []
-    if env.exists():
-        lines = [l for l in env.read_text(encoding="utf-8").splitlines()
-                 if not l.startswith("RADAR_PASSWORD_HASH")]
-    lines.append(f"RADAR_PASSWORD_HASH={h}")
-    env.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.environ["RADAR_PASSWORD_HASH"] = h
-
-    token = sec.create_session(_client_ip(request), request.headers.get("user-agent", ""))
-    response.set_cookie(sec.COOKIE, token, max_age=sec.SESSION_TTL,
-                        httponly=True, samesite="lax", path="/")
-    return {"ok": True, "data": {"authenticated": True}}
+@router.get("/api/auth/users")
+def auth_users(limit: int = 20):
+    """登录页下拉提示：只暴露名字与最近活跃时间，不泄露任何业务数据"""
+    rows = ident.list_users(min(max(limit, 1), 50))
+    return {"ok": True, "data": [{"name": r["name"]} for r in rows]}
 
 
-@router.post("/api/auth/login")
-def auth_login(body: LoginIn, request: Request, response: Response):
-    ip = _client_ip(request)
-    if not sec._check_rate(ip):
-        return {"ok": False, "msg": "尝试过于频繁，请 5 分钟后再试"}
-    stored = sec._password_hash()
-    if not stored:
-        return {"ok": False, "msg": "尚未设置口令"}
-    if not sec.verify_password(body.password or "", stored):
-        sec._record_fail(ip)
-        return {"ok": False, "msg": "口令错误"}
-    token = sec.create_session(ip, request.headers.get("user-agent", ""))
-    response.set_cookie(sec.COOKIE, token, max_age=sec.SESSION_TTL,
-                        httponly=True, samesite="lax", path="/")
-    return {"ok": True, "data": {"authenticated": True}}
+@router.post("/api/auth/enter")
+def auth_enter(body: EnterIn, request: Request, response: Response):
+    try:
+        user, created = ident.enter(body.name)
+    except ValueError as e:
+        return {"ok": False, "msg": str(e)}
+    except Exception as e:
+        return {"ok": False, "msg": f"进入失败：{str(e)[:80]}"}
+
+    token = ident.create_session(user["id"], _client_ip(request),
+                                 request.headers.get("user-agent", ""))
+    response.set_cookie(ident.COOKIE, token, max_age=ident.SESSION_TTL,
+                        httponly=True, samesite="lax", path="/",
+                        secure=_cookie_secure(request))
+    return {
+        "ok": True,
+        "data": {
+            "user_id": user["id"],
+            "name": user["name"],
+            "created": created,
+            "token": token,        # APK 用；网页会忽略并依赖 Cookie
+        },
+    }
+
+
+@router.get("/api/auth/me")
+def auth_me(request: Request):
+    uid = ident.uid_from_request(request)
+    user = ident.get_user(uid) or {}
+    from . import usersecret
+    sec = usersecret.get_public(uid)
+    return {
+        "ok": True,
+        "data": {
+            "user_id": uid,
+            "name": user.get("name", ""),
+            "created_at": user.get("created_at"),
+            "last_seen_at": user.get("last_seen_at"),
+            "ai": sec,
+        },
+    }
+
+
+@router.put("/api/auth/me")
+def auth_rename(body: RenameIn, request: Request):
+    uid = ident.uid_from_request(request)
+    try:
+        key = ident.normalize_name(body.name)
+    except ValueError as e:
+        return {"ok": False, "msg": str(e)}
+    disp = ident.display_name(body.name) or key
+
+    other = ident.find_user_by_key(key)
+    if other and other["id"] != uid:
+        return {"ok": False, "msg": "这个名字已被占用"}
+
+    c = ident._db()
+    c.execute("UPDATE app_user SET name=?, name_key=? WHERE id=?", (disp, key, uid))
+    c.commit()
+    return {"ok": True, "data": {"user_id": uid, "name": disp}}
 
 
 @router.post("/api/auth/logout")
 def auth_logout(request: Request, response: Response):
-    sec.drop_session(request.cookies.get(sec.COOKIE))
-    response.delete_cookie(sec.COOKIE, path="/")
+    ident.drop_session(ident.token_from_request(request))
+    response.delete_cookie(ident.COOKIE, path="/")
     return {"ok": True}

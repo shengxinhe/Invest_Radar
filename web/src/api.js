@@ -1,14 +1,20 @@
-// 极简 API 封装
-const BASE = "";
+// 极简 API 封装（M8: 支持 APK 跨域 + Bearer token）
+import { API_BASE, authHeaders, clearToken } from "./env.js";
+
+const BASE = API_BASE;
 
 export async function req(path, opts = {}) {
   const res = await fetch(BASE + path, {
-    headers: { "Content-Type": "application/json" },
-    credentials: "same-origin",
+    headers: authHeaders({
+      "Content-Type": "application/json",
+      ...(opts.headers || {}),
+    }),
+    credentials: "include",
     ...opts,
   });
   if (res.status === 401) {
-    // 认证失效：通知 App 回到登录页
+    // 认证失效：清掉本地 token，通知 App 回到登录页
+    clearToken();
     window.dispatchEvent(new CustomEvent("radar:unauthorized"));
     throw new Error("未登录");
   }
@@ -16,7 +22,9 @@ export async function req(path, opts = {}) {
     let msg = `HTTP ${res.status}`;
     try {
       const j = await res.json();
-      if (j.detail) msg = j.detail;
+      if (typeof j.detail === "string") msg = j.detail;
+      else if (j.detail) msg = JSON.stringify(j.detail).slice(0, 160);
+      else if (j.msg) msg = j.msg;
     } catch {}
     throw new Error(msg);
   }
@@ -27,6 +35,22 @@ export async function req(path, opts = {}) {
 
 export const api = {
   health: () => req("/api/health"),
+
+  // 身份（M8：名字即账户）
+  status: () => req("/api/auth/status"),
+  knownUsers: () => req("/api/auth/users"),
+  me: () => req("/api/auth/me"),
+  rename: (name) =>
+    req("/api/auth/me", { method: "PUT", body: JSON.stringify({ name }) }),
+
+  // DeepSeek Key（每人自己的）
+  myKey: () => req("/api/me/key"),
+  saveKey: (api_key) =>
+    req("/api/me/key", { method: "PUT", body: JSON.stringify({ api_key }) }),
+  delKey: () => req("/api/me/key", { method: "DELETE" }),
+  testKey: () => req("/api/me/key/test", { method: "POST" }),
+  saveAiSettings: (body) =>
+    req("/api/me/ai-settings", { method: "PUT", body: JSON.stringify(body) }),
 
   watch: () => req("/api/watch"),
   addWatch: (body) =>
@@ -60,6 +84,8 @@ export const api = {
   thesisHistory: (code) => req(`/api/watch/${code}/thesis/history`),
   updateThesis: (code, patch) =>
     req(`/api/watch/${code}/thesis`, { method: "PUT", body: JSON.stringify({ code, ...patch }) }),
+  reorderWatch: (codes) =>
+    req("/api/watch/reorder", { method: "PUT", body: JSON.stringify({ codes }) }),
   // M6 研究笔记与报告
   researchList: (q = "") => req(`/api/research?q=${encodeURIComponent(q)}`),
   researchAdd: (body) => req("/api/research", { method: "POST", body: JSON.stringify(body) }),
