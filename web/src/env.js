@@ -1,38 +1,52 @@
 /**
- * M8 · 环境与身份基础设施
+ * M8 · 环境与身份基础设施（本机版）
  *
- * 为什么需要这一层
- * ----------------
- * 旧代码 `const BASE = ""` 在浏览器里没问题（同源），
- * 但 Capacitor 打包后页面 origin 是 https://localhost，
- * 相对路径会打到 WebView 本地，API 全部 404。
- * 所以：唯一出口 = 这个文件的 API_BASE。
+ * 访问方式
+ * --------
+ * 1) 本机浏览器：  http://127.0.0.1:8000         → 同源，API_BASE = ""
+ * 2) 本机浏览器(Tailscale 域名)：
+ *                  https://rancho.duiker-ling.ts.net → 同源，API_BASE = ""
+ * 3) 手机装 APK：  WebView origin 是 https://localhost（跨站）
+ *                  → 需要显式 API_BASE，来源见 resolveBase()
+ *
+ * 关键：浏览器一律走同源，绝不要把地址写死成某个域名，
+ *      否则你换 WiFi / 换 Tailscale 名就会全部 404。
  */
 
 // ---- 运行时判定 ----
 export const IS_NATIVE =
   typeof window !== "undefined" &&
   (!!window.Capacitor?.isNativePlatform?.() ||
-    // 兜底：Capacitor 的 WebView 有这两个标记
     location.protocol === "capacitor:" ||
     (location.hostname === "localhost" && !!window.Capacitor));
 
-// ---- API 地址（换域名只改这里）----
-const DEV_FALLBACK = ""; // 浏览器开发时走 vite proxy / 同源
-
-function resolveBase() {
-  // 1) 构建时注入（推荐用于 APK：VITE_API_BASE=https://api.xxx）
+// ---- APK 的 API 地址 ----
+// 优先级：构建注入 > 本地存储（App 内可改）> 内置默认
+function nativeBase() {
   const injected = import.meta.env?.VITE_API_BASE;
   if (injected) return String(injected).replace(/\/+$/, "");
-
-  // 2) APK 没注入时：硬编码生产地址（punycode，兼容所有 Android WebView）
-  if (IS_NATIVE) return "https://api.you.xn--6or.gay";
-
-  // 3) 浏览器：同源
-  return DEV_FALLBACK;
+  try {
+    const saved = localStorage.getItem("radar_api_base");
+    if (saved) return String(saved).replace(/\/+$/, "");
+  } catch {}
+  // 默认：Tailscale 提供的 HTTPS 地址（手机装 Tailscale 后即可用）
+  // 若走局域网，用户可在 App 里改成 http://<电脑内网IP>:8000
+  return "https://rancho.duiker-ling.ts.net";
 }
 
-export const API_BASE = resolveBase();
+export const API_BASE = IS_NATIVE ? nativeBase() : "";
+
+/** 允许用户在 App 内切换 API 地址（换网络时用） */
+export function setApiBase(url) {
+  try {
+    if (url) localStorage.setItem("radar_api_base", String(url).replace(/\/+$/, ""));
+    else localStorage.removeItem("radar_api_base");
+  } catch {}
+}
+
+export function getApiBase() {
+  return IS_NATIVE ? nativeBase() : "";
+}
 
 // ---- token（APK 用；浏览器依赖 HttpOnly Cookie）----
 const TOKEN_KEY = "radar_token";

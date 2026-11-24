@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""M1 · FastAPI 服务：业务 API + 静态托管 PWA"""
+"""M8 · FastAPI 服务：业务 API + 静态托管 PWA（本机运行版）"""
 import asyncio
 import io
 import json
@@ -7,6 +7,28 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
+
+
+def _load_dotenv():
+    """
+    显式加载 .env，且必须在其它模块读取 os.environ 之前执行。
+    之前依赖 server.llm.client 的导入副作用，顺序一变配置就丢。
+    """
+    env = Path(__file__).resolve().parent.parent / ".env"
+    if not env.exists():
+        return
+    for raw in env.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k, v = k.strip(), v.strip().strip('"').strip("'")
+        if k:
+            os.environ.setdefault(k, v)
+
+
+_load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -1744,10 +1766,16 @@ def spa(path: str):
 def main():
     import argparse
     import uvicorn
+
+    # M8: 从 .env 读默认值，命令行参数优先
+    def _env(k, d):
+        v = (os.environ.get(k) or "").strip()
+        return v or d
+
     p = argparse.ArgumentParser()
-    # M1: 默认只监听本机；外网经 Tailscale Serve 暴露，不用 0.0.0.0
-    p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=8000)
+    # 默认只监听本机（配 Tailscale Serve）；局域网直连用 --host 0.0.0.0
+    p.add_argument("--host", default=_env("RADAR_HOST", "127.0.0.1"))
+    p.add_argument("--port", type=int, default=int(_env("RADAR_PORT", "8000")))
     p.add_argument("--reload", action="store_true")
     a = p.parse_args()
     uvicorn.run("server.main:app", host=a.host, port=a.port, reload=a.reload)
