@@ -1149,7 +1149,11 @@ async def api_ai_global(body: GlobalChatIn):
                              headers=sse.SSE_HEADERS)
 
 
-# ---------------- 多空辩论（借鉴 TradingAgents） ----------------
+# ---------------- 多空辩论 ----------------
+# 结构借鉴 TradingAgents（https://github.com/TauricResearch/TradingAgents, Apache-2.0）
+#   看多研究员 -> 看空研究员 -> 裁决者
+# 未引入其框架与数据层（其 yfinance 面向美股，A股需巨潮/互动易/龙虎榜）
+# 详见 CREDITS.md
 
 @app.post("/api/stock/{code}/debate")
 async def api_stock_debate(code: str):

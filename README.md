@@ -423,7 +423,50 @@ AI | DeepSeek（OpenAI 兼容协议） |
 
 ---
 
+## 借鉴与致谢
+
+本项目站在开源社区的肩膀上。完整的来源说明见 [CREDITS.md](CREDITS.md)，这里列出核心的几项：
+
+### 架构思路借鉴
+
+| 项目 | 借鉴了什么 | 检查 |
+|---|---|---|
+**[TradingAgents](https://github.com/TauricResearch/TradingAgents)**（Apache-2.0） | **多空辩论的三段式结构**：看多研究员 → 看空研究员 → 交易员裁决 | 只借结构，未引入其 LangGraph 框架和 yfinance 数据层 |
+**Bloomberg 终端**（商业产品） | 仅设计理念：深色高密度、数据优先、涨红跌绿 | 无代码借鉴 |
+
+> **为什么只借 TradingAgents 的结构**：它的数据层是美股导向（yfinance），A 股的巨潮公告体系、互动易、龙虎榜/两融/解禁它都没有。直接引入框架要写大量适配层，不如自己实现 3 个 LLM 调用。
+
+### 核心依赖
+
+```
+后端  FastAPI · uvicorn · httpx · requests · pandas · akshare · pypinyin · Pillow · pypdf
+前端  Vue 3 · Vite · klinecharts（K线图表全部基于此库）
+AI    DeepSeek（提示词全部原创）
+```
+
+### 数据来源
+
+```
+腾讯行情   实时行情 / K线 / 分时          主数据源
+巨潮资讯   公告 / 互动易 / 全文搜索        官方披露
+东方财富   研报 / 龙虎榜 / 两融 / 解禁     串行 + 1.2s 间隔防封
+新浪财经   期货行情（有色股主变量）        沪铜等
+```
+
+⚠️ **数据仅供个人研究，不可商业分发。限流参数请勿调小。**
+
+### 明确没有使用的项目
+
+| 项目 | 原因 |
+|---|---|
+[OpenBB](https://github.com/OpenBB-finance/OpenBB) | 数据层与 A 股不匹配，换掉要重写全部适配 |
+[FinceptTerminal](https://github.com/Fincept-Corporation/FinceptTerminal) | C++/Qt6 桌面应用，形态相反；AGPL 传染性 |
+[qlib](https://github.com/microsoft/qlib) | 量化回测框架，本项目是信息分析不是策略回测 |
+
+---
+
 ## 免责声明
+
 
 **本项目仅供个人研究与学习使用。**
 
