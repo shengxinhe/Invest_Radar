@@ -55,3 +55,13 @@ tools/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ============ 个人本地配置（含真实持仓）============
+config.local.py
+invest_radar/config.local.py
+
+# ============ 个人脚本（抓数据/截图等一次性工具）============
+scripts/shoot_*.py
+scripts/_*.py
+landing/shots/*.png
+landing/preview*.png

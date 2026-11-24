@@ -1,13 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-投资雷达 · 配置
+投资雷达 · 默认配置（开源版）
 
 ═══════════════════════════════════════════════════════════════
-  改这一个文件就够了，其他文件不用动。
+  两种改法，选一个：
+═══════════════════════════════════════════════════════════════
+
+  方式 A（推荐，不影响上游更新）：
+      复制本文件为 config.local.py，改那个文件
+      config.local.py 已在 .gitignore 里，不会被提交
+      本文件末尾的加载逻辑会自动覆盖同名变量
+
+  方式 B（简单粗暴）：
+      直接改这个文件。但以后 git pull 上游更新时会冲突
+
 ═══════════════════════════════════════════════════════════════
 
 第一次使用：
-  1. 把下面的 WATCHLIST 换成你自己关注的股票
+  1. 把你的股票填进 WATCHLIST（或 config.local.py）
   2. thesis 写清「这票靠什么赚钱、你盯什么变量」
      —— 这是整套系统最重要的一句话，AI 每次解读都会拿它当标尺
   3. 跑 `python -m invest_radar.universe` 拉全市场名单
@@ -22,7 +32,7 @@ DATA_DIR.mkdir(exist_ok=True)
 OUT_DIR.mkdir(exist_ok=True)
 
 
-# ============ 监控清单（改成你自己的）============
+# ============ 监控清单（示例，改成你自己的）============
 # code    : 6 位股票代码
 # name    : 你的叫法，跟交易所简称不一样也没关系
 # alias   : 别名，新闻里出现这些词也算命中
@@ -32,7 +42,7 @@ OUT_DIR.mkdir(exist_ok=True)
 #           写不好就先空着，但写了之后 AI 判断质量会完全不同
 WATCHLIST = [
     {
-        "code": "600519",                       # ← 改成你的股票
+        "code": "600519",
         "name": "贵州茅台",
         "alias": ["茅台", "贵州茅台"],
         "role": "核心",
@@ -113,3 +123,30 @@ ALLOWED_ORIGINS = [
     "https://localhost",          # Capacitor WebView
     "capacitor://localhost",      # iOS Capacitor
 ]
+
+
+# ═══════════════════════════════════════════════════════════════
+#  本地配置覆盖（config.local.py）
+# ═══════════════════════════════════════════════════════════════
+#  如果你的关注池、阈值、推送地址不想公开，写在 config.local.py 里。
+#  这个文件不会被 git 跟踪，上游更新 config.py 时也不会冲突。
+# ═══════════════════════════════════════════════════════════════
+_LOCAL_CONFIG = Path(__file__).resolve().parent / "config.local.py"
+
+LOCAL_CONFIG_LOADED = False
+LOCAL_CONFIG_ERROR = ""
+
+if _LOCAL_CONFIG.exists():
+    try:
+        _ns = {
+            "__file__": str(_LOCAL_CONFIG),
+            "__name__": "config.local",
+        }
+        exec(compile(_LOCAL_CONFIG.read_text(encoding="utf-8"),
+                     str(_LOCAL_CONFIG), "exec"), _ns)
+        for _key, _val in _ns.items():
+            if _key.isupper() and not _key.startswith("_"):
+                globals()[_key] = _val
+        LOCAL_CONFIG_LOADED = True
+    except Exception as _exc:      # noqa: BLE001
+        LOCAL_CONFIG_ERROR = str(_exc)
