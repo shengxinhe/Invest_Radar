@@ -1,17 +1,21 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 cd /d "%~dp0"
 echo ================================================
-echo   投资雷达 · 开启外网（免费，无需域名）
+echo   临时外网访问（Cloudflare Quick Tunnel）
 echo ================================================
 echo.
-echo 前提：先运行 启动服务.bat，确认 http://127.0.0.1:8000 能打开
+echo   说明：
+echo     - 需要先下载 cloudflared.exe 放到 tools\ 目录
+echo     - 会生成一个 xxx.trycloudflare.com 的临时地址
+echo     - 每次重启地址会变，适合临时测试
+echo     - 长期使用请用 Tailscale Serve（见 README）
 echo.
-echo 下面的网址是临时公网地址，手机在任何网络都能访问
-echo 每次重启都会变，把它添加到手机主屏幕后就不用管了
-echo.
-echo 按任意键开始...
-pause >nul
-echo.
+if not exist "tools\cloudflared.exe" (
+    echo [ERROR] 找不到 tools\cloudflared.exe
+    echo         下载: https://github.com/cloudflare/cloudflared/releases
+    pause
+    exit /b 1
+)
 tools\cloudflared.exe tunnel --url http://127.0.0.1:8000
 pause

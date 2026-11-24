@@ -1,0 +1,10 @@
+fastapi==0.163.1
+uvicorn==0.54.0
+httpx==0.25.2
+requests==2.34.2
+pandas==3.0.3
+akshare==1.20.65
+pypinyin==0.55.0
+pillow==13.0.0
+pypdf==7.1.1
+python-dotenv

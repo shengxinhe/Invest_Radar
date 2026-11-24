@@ -5,7 +5,7 @@
  * --------
  * 1) 本机浏览器：  http://127.0.0.1:8000         → 同源，API_BASE = ""
  * 2) 本机浏览器(Tailscale 域名)：
- *                  https://rancho.duiker-ling.ts.net → 同源，API_BASE = ""
+ *                   → 同源，API_BASE = ""
  * 3) 手机装 APK：  WebView origin 是 https://localhost（跨站）
  *                  → 需要显式 API_BASE，来源见 resolveBase()
  *
@@ -29,9 +29,8 @@ function nativeBase() {
     const saved = localStorage.getItem("radar_api_base");
     if (saved) return String(saved).replace(/\/+$/, "");
   } catch {}
-  // 默认：Tailscale 提供的 HTTPS 地址（手机装 Tailscale 后即可用）
-  // 若走局域网，用户可在 App 里改成 http://<电脑内网IP>:8000
-  return "https://rancho.duiker-ling.ts.net";
+  // 默认留空：在 APK 首次打开时会引导用户填自己的地址
+  return "";
 }
 
 export const API_BASE = IS_NATIVE ? nativeBase() : "";
