@@ -1,27 +1,60 @@
+# ============ 密钥与环境（绝不提交）============
 .env
 .env.*
 !.env.example
 *.key
 *.crt
-__pycache__/
-node_modules/
-dist/
-web_build/assets/
-out/*.png
-*.log
+*.pem
+*.jks
+*.keystore
 
-# 运行时数据（数据库、备份、会话密钥）绝不入库
+# ============ 数据（个人持仓与研究记录）============
 data/
 !data/.gitkeep
 
-# 安卓构建产物
+# ============ 计划、报告、审计（含个人投资策略）============
+PLAN*.md
+*-REPORT.md
+OPTIMIZATION_REPORT.md
+CHANGELOG.md
+audit.md
+使用说明.md
+本机运行说明.md
+
+# ============ 输出与日志 ============
+out/
+*.log
+*.err
+*.out
+
+# ============ 备份与临时文件 ============
+*.bak
+*.bak-*
+*.orig
+*.tmp
+
+# ============ 个人监控脚本（含具体价位策略）============
+invest_radar/monitor_*.py
+
+# ============ 依赖与构建产物 ============
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+dist/
+web_build/assets/
+
+# ============ Android 签名与构建 ============
 android/.gradle/
 android/app/build/
 android/build/
 android/local.properties
-*.jks
-*.keystore
-!debug.keystore
+debug.keystore
 
-# 工具二进制
-tools/*.exe
+# ============ 工具与二进制 ============
+tools/
+
+# ============ 系统文件 ============
+.DS_Store
+Thumbs.db
+desktop.ini
