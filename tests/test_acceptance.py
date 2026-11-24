@@ -26,7 +26,7 @@ if sys.platform == "win32":
 import requests
 
 U = "http://127.0.0.1:8000"
-PASSWORD = "***REDACTED***"
+PASSWORD = os.environ.get("RADAR_PASSWORD", "")  # 从环境变量读，不硬编码
 s = requests.Session()
 s.trust_env = False
 s.proxies = {"http": None, "https": None}
