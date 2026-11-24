@@ -481,12 +481,21 @@ def _entry_for_ai(eid):
 # 代码级噪音标题（AI 调用前过滤，省 token；命中的解读直接给固定结论）
 _NOISE_TITLES = (
     "证券简称变更", "简称变更", "启用新", "LOGO", "办公地址", "迁址",
-    "会计师事务所", "聘任", "辞职", "离任", "投资者关系活动记录表",
+    "聘任", "辞职", "离任", "投资者关系活动记录表",
+)
+
+# 例外白名单：命中噪音词但这些情形必须走 AI
+_NOISE_EXCEPTIONS = (
+    "变更会计师事务所", "更换会计师事务所",     # 审计变更 = 治理风险信号
+    "发行股份购买资产", "重大资产重组",         # 重组相关
+    "立案", "处罚", "问询函", "关注函",
 )
 
 
 def _is_noise_title(title: str) -> bool:
     t = title or ""
+    if any(k in t for k in _NOISE_EXCEPTIONS):
+        return False        # 白名单优先
     return any(k in t for k in _NOISE_TITLES)
 
 
