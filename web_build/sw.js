@@ -2,7 +2,7 @@
 // 策略：App Shell 预缓存 + API 网络优先（离线回退缓存）
 // 版本号由构建脚本自动更新（scripts/bump_sw.py），每次部署必须变化，否则客户端不更新
 
-const VERSION = "v202611241026";
+const VERSION = "v202611241046";
 const SHELL = `shell-${VERSION}`;
 const RUNTIME = `runtime-${VERSION}`;
 
