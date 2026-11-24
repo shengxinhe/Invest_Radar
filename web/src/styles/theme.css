@@ -1,0 +1,68 @@
+/* ============================================================
+   投资雷达 2.0 · Theme（基础元素与布局）
+   只做基础重置与全局布局，不定义任何颜色变量（见 tokens.css）
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--bg) var(--bg-glow) no-repeat;
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro", system-ui,
+               "Microsoft YaHei", sans-serif;
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#app { min-height: 100%; }
+a { color: var(--accent); text-decoration: none; }
+button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input, textarea, select { font: inherit; color: inherit; }
+
+.num { font-variant-numeric: tabular-nums; }
+
+/* ---------- 语义色工具类 ---------- */
+.up { color: var(--up); }
+.down { color: var(--down); }
+.flat { color: var(--flat); }
+
+/* ---------- 主内容区（含底部导航留白） ---------- */
+.main {
+  padding: var(--sp-3) var(--sp-4);
+  padding-bottom: calc(100px + var(--safe-bottom)) !important;
+}
+
+/* ---------- 通用状态 ---------- */
+.loading {
+  text-align: center; padding: 30px;
+  color: var(--text-2); font-size: var(--fs-sm);
+}
+.spinner {
+  width: 18px; height: 18px; margin: 0 auto var(--sp-2);
+  border: 2px solid var(--border-2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.empty {
+  text-align: center; padding: 36px var(--sp-5);
+  color: var(--text-2); font-size: var(--fs-sm); line-height: 1.8;
+}
+
+.ai-note {
+  color: var(--text-3); font-size: 11px;
+  margin-top: var(--sp-3); text-align: center; line-height: 1.6;
+}
+
+/* ---------- 尊重减少动效偏好 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

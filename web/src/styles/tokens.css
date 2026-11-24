@@ -1,0 +1,80 @@
+/* ============================================================
+   投资雷达 2.0 · Design Tokens（唯一变量源）
+   所有颜色/间距/圆角/字号只在此定义，其他文件禁止重复定义。
+   A 股语义：涨=红，跌=绿（在此单点定义）
+   ============================================================ */
+
+:root {
+  /* ---------- 背景层 ---------- */
+  --bg: #08090F;
+  --bg-glow: radial-gradient(1200px 600px at 50% -10%, #1a1b3a55, transparent 60%);
+  --surface-1: rgba(255, 255, 255, 0.035);   /* 卡片 */
+  --surface-2: rgba(255, 255, 255, 0.06);    /* 次级/输入 */
+  --surface-3: rgba(255, 255, 255, 0.09);    /* 悬浮/激活 */
+  --border-1: rgba(255, 255, 255, 0.07);
+  --border-2: rgba(255, 255, 255, 0.12);
+
+  /* ---------- 玻璃层（仅顶栏与底部导航使用） ---------- */
+  --glass-bg: rgba(255, 255, 255, 0.06);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-hi: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+
+  /* ---------- 文字 ---------- */
+  --text: #E8EAF0;
+  --text-2: #8A8FA3;
+  --text-3: #5B6373;
+
+  /* ---------- 品牌与语义色 ---------- */
+  --accent: #5EEAD4;
+  --accent-dim: rgba(94, 234, 212, 0.12);
+  --accent-border: rgba(94, 234, 212, 0.35);
+
+  /* A股：涨红跌绿 */
+  --up: #FF5C7A;
+  --down: #3DDC97;
+  --flat: #8A8FA3;
+  --up-grad: linear-gradient(180deg, #FF7A96, #E84368);
+  --down-grad: linear-gradient(180deg, #5AEBA4, #2FBF7F);
+
+  /* 状态色 */
+  --risk: #FF5C7A;      /* 风险提示（与涨色同，A股语境） */
+  --good: #3DDC97;
+  --warn: #F5C542;
+
+  /* ---------- 圆角 ---------- */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-full: 999px;
+
+  /* ---------- 间距 ---------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+
+  /* ---------- 字号 ---------- */
+  --fs-xs: 10.5px;
+  --fs-sm: 12px;
+  --fs-base: 13.5px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 22px;
+
+  /* ---------- 触摸尺寸 ---------- */
+  --tap: 44px;
+
+  /* ---------- 安全区 ---------- */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* ---------- 兼容别名（旧组件仍在用，逐步迁移） ---------- */
+  --radius: var(--r-xl);
+  --dim: var(--text-2);
+  --panel: var(--surface-1);
+  --panel2: var(--surface-2);
+  --line: var(--border-1);
+}

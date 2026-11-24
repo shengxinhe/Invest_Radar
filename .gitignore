@@ -1,0 +1,27 @@
+.env
+.env.*
+!.env.example
+*.key
+*.crt
+__pycache__/
+node_modules/
+dist/
+web_build/assets/
+out/*.png
+*.log
+
+# 运行时数据（数据库、备份、会话密钥）绝不入库
+data/
+!data/.gitkeep
+
+# 安卓构建产物
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+*.jks
+*.keystore
+!debug.keystore
+
+# 工具二进制
+tools/*.exe
