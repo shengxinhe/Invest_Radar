@@ -40,7 +40,7 @@ from invest_radar import analyzer, config, fetcher, store, sync
 from invest_radar.universe import update_universe
 from invest_radar import watcher
 from invest_radar.websearch import web_search
-from server import auth_routes, identity, quotes, sse, usersecret
+from server import quotes, sse, usersecret
 from server.llm import client as llm
 from server.llm import prompts
 
@@ -51,7 +51,6 @@ DATA_ACTION_TIMEOUT = 180
 @asynccontextmanager
 async def lifespan(app):
     store.init()
-    identity.prune_sessions()      # M3: 清理过期会话
     await quotes.start()           # M5: 共享行情轮询
     # 主数据过期就后台补（不阻塞启动）
     try:
@@ -84,30 +83,8 @@ app.add_middleware(
 )
 
 
-@app.middleware("http")
-async def auth_guard(request: Request, call_next):
-    """
-    M8: 身份闸门。
-    · 公共路径放行
-    · 其余路径从 Cookie / Bearer 解析 uid，写入 contextvar，
-      之后 store 层默认按该 uid 过滤（见 invest_radar/ctx.py）
-    · 解析失败直接 401，请求体里传什么 user_id 都不会被采信
-    """
-    from invest_radar import ctx
-    if request.method == "OPTIONS" or identity.is_public(request):
-        return await call_next(request)
-    uid = identity.resolve_session(identity.token_from_request(request))
-    if not uid:
-        return JSONResponse({"ok": False, "msg": "未登录",
-                             "detail": "unauthorized"}, status_code=401)
-    token = ctx.set_uid(uid)
-    try:
-        return await call_next(request)
-    finally:
-        ctx.reset(token)
-
-
-app.include_router(auth_routes.router)
+# 单用户模式：本机个人使用，无登录。数据层默认 uid=1（见 invest_radar/ctx.py），
+# 所有数据都归属这个唯一身份；请勿将服务暴露到公网。
 
 
 # ---------------- 工具 ----------------
@@ -122,9 +99,8 @@ def fail(msg, code=400):
 
 def _model(kind="cheap"):
     """M8: 模型按用户设置取；用户没设就用默认。"""
-    from invest_radar import ctx
     try:
-        cheap, strong = usersecret.models(ctx.current_uid())
+        cheap, strong = usersecret.models(1)
     except Exception:
         cheap, strong = llm.MODEL_CHEAP, llm.MODEL_STRONG
     return strong if kind == "strong" else cheap
@@ -398,10 +374,8 @@ async def stream_quotes(codes: str = ""):
     """
     code_list = [c.strip() for c in codes.split(",") if c.strip()]
     if not code_list:
-        # 显式取当前用户的关注池（不依赖生成器上下文）
-        from invest_radar import ctx as _ctx
-        uid = _ctx.current_uid()
-        code_list = [w["code"] for w in store.list_watch(uid)]
+        # 未指定代码时取关注池（单用户，store 层用默认 uid）
+        code_list = [w["code"] for w in store.list_watch()]
 
     sid, queue = quotes.subscribe(code_list)
 
@@ -1564,9 +1538,8 @@ def api_ai_status():
 
 @app.get("/api/ai/usage")
 def api_ai_usage():
-    """成本面板：只统计当前用户自己的用量"""
-    from invest_radar import ctx
-    uid = ctx.current_uid()
+    """成本面板：单用户，统计 uid=1 的用量"""
+    uid = 1
     c = store.conn()
     n_cache = c.execute("SELECT COUNT(*) n FROM entry_ai WHERE user_id=?",
                         (uid,)).fetchone()["n"]
@@ -1609,31 +1582,26 @@ class AiSettingsIn(BaseModel):
 @app.get("/api/me/key")
 def api_get_key():
     """只返回是否已配 + 脱敏提示，绝不返回明文"""
-    from invest_radar import ctx
-    return ok(usersecret.get_public(ctx.current_uid()))
+    return ok(usersecret.get_public(1))
 
 
 @app.put("/api/me/key")
 def api_put_key(body: KeyIn):
-    from invest_radar import ctx
-    uid = ctx.current_uid()
     try:
-        return ok(usersecret.save_key(uid, body.api_key))
+        return ok(usersecret.save_key(1, body.api_key))
     except ValueError as e:
         fail(str(e), 400)
 
 
 @app.delete("/api/me/key")
 def api_del_key():
-    from invest_radar import ctx
-    return ok(usersecret.delete_key(ctx.current_uid()))
+    return ok(usersecret.delete_key(1))
 
 
 @app.post("/api/me/key/test")
 async def api_test_key():
-    """用该用户自己的 Key 发一次最小请求，验证连通性"""
-    from invest_radar import ctx
-    uid = ctx.current_uid()
+    """用配置的 Key 发一次最小请求，验证连通性"""
+    uid = 1
     if not llm.available(uid):
         fail("还没配置 Key", 400)
     try:
@@ -1650,9 +1618,8 @@ async def api_test_key():
 
 @app.put("/api/me/ai-settings")
 def api_put_ai_settings(body: AiSettingsIn):
-    from invest_radar import ctx
     return ok(usersecret.save_settings(
-        ctx.current_uid(), body.model_cheap, body.model_strong, body.ai_enabled))
+        1, body.model_cheap, body.model_strong, body.ai_enabled))
 
 
 @app.get("/api/chat/global")

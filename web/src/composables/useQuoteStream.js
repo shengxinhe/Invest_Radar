@@ -1,14 +1,11 @@
 /**
- * M8 · useQuoteStream —— SSE 行情连接
+ * useQuoteStream —— SSE 行情连接
  *
- * 从 EventSource 换成 fetch + ReadableStream，原因：
- *   EventSource 不能设置 Authorization 头，APK 跨域时无法带 Bearer token，
- *   服务端只会回 401。fetch 流式读取兼容两种凭证（Cookie / Bearer）。
- *
+ * 用 fetch + ReadableStream 流式读取（兼容 APK 跨域场景），
  * 同时补齐：断网/恢复检测、指数退避重连、页面隐藏暂停、卸载清理。
  */
 import { ref, onMounted, onUnmounted } from "vue";
-import { API_BASE, authHeaders } from "../env.js";
+import { API_BASE } from "../env.js";
 
 export function useQuoteStream(onQuote) {
   const status = ref("idle");      // idle / connecting / open / retrying / offline / closed
@@ -30,17 +27,10 @@ export function useQuoteStream(onQuote) {
     try {
       const url = `${API_BASE}/api/stream/quotes${codeList ? `?codes=${encodeURIComponent(codeList)}` : ""}`;
       const res = await fetch(url, {
-        headers: authHeaders({ Accept: "text/event-stream" }),
-        credentials: "include",
+        headers: { Accept: "text/event-stream" },
         signal: ctrl.signal,
       });
 
-      if (res.status === 401) {
-        status.value = "closed";
-        window.dispatchEvent(new CustomEvent("radar:unauthorized"));
-        close();
-        return;
-      }
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
       status.value = "open";

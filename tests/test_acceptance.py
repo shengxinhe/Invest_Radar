@@ -26,7 +26,6 @@ if sys.platform == "win32":
 import requests
 
 U = "http://127.0.0.1:8000"
-PASSWORD = os.environ.get("RADAR_PASSWORD", "")  # 从环境变量读，不硬编码
 s = requests.Session()
 s.trust_env = False
 s.proxies = {"http": None, "https": None}
@@ -46,25 +45,18 @@ def section(t):
 
 # ============ 1. 安全 ============
 section("1 / 安全")
-r = s.get(f"{U}/api/watch", timeout=15)
-check("未登录访问敏感接口返回 401", r.status_code == 401, f"got {r.status_code}")
-
 r = s.get(f"{U}/api/health", timeout=15)
 check("health 公开", r.status_code == 200)
 check("health 不泄露库统计", "stats" not in r.text)
+
+r = s.get(f"{U}/api/watch", timeout=15)
+check("单用户免登录：敏感接口直接可用", r.status_code == 200, f"got {r.status_code}")
 
 r = s.options(f"{U}/api/watch", timeout=15, headers={
     "Origin": "https://evil.example.com",
     "Access-Control-Request-Method": "POST"})
 check("CORS 拒绝未知来源",
       r.headers.get("access-control-allow-origin") != "https://evil.example.com")
-
-r = s.post(f"{U}/api/auth/login", json={"password": PASSWORD}, timeout=20)
-check("口令登录成功", r.json().get("ok") is True)
-check("会话 Cookie 已下发", bool(s.cookies.get("radar_sid")))
-
-r = s.post(f"{U}/api/auth/login", json={"password": "wrong-password-x"}, timeout=20)
-check("错误口令被拒", r.json().get("ok") is not True)
 
 # ============ 2. 数据库 ============
 section("2 / 数据库")
@@ -83,7 +75,7 @@ check("FTS 中文子串可检索", fts > 0, f"{fts} 命中")
 
 counts = {t: c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
           for t in ("stock", "watch", "entry", "entry_ai", "quote_daily",
-                    "research_report", "notification_log", "app_session")}
+                    "research_report", "notification_log")}
 check("核心数据存在", counts["stock"] > 5000 and counts["entry"] > 0, str(counts))
 c.close()
 
@@ -202,8 +194,11 @@ check("WAL 未异常膨胀", wal_mb < 10, f"{wal_mb:.2f} MB")
 c3 = sqlite3.connect("data/radar.db")
 n_q = c3.execute("SELECT COUNT(*) FROM quote").fetchone()[0]
 n_qd = c3.execute("SELECT COUNT(*) FROM quote_daily").fetchone()[0]
+n_old = c3.execute("SELECT COUNT(*) FROM quote WHERE ts < ?",
+                   (int(time.time()) - 7 * 86400,)).fetchone()[0]
 c3.close()
-check("行情明细已做保留策略", n_q < 5000, f"明细 {n_q} 行 / 日快照 {n_qd} 行")
+check("行情明细保留策略生效（7 天前无残留）", n_old == 0,
+      f"明细 {n_q} 行 / 日快照 {n_qd} 行 / 7 天前残留 {n_old} 行")
 
 # 周末快照检查
 import datetime as dt

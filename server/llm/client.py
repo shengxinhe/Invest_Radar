@@ -74,14 +74,13 @@ def _valid(key: str) -> bool:
 
 def current_key(uid: int | None = None) -> str:
     """
-    M8: 取该用户自己的 Key；没有则返回空（绝不回落到别人的 Key）。
-    uid 为 None 时取当前请求上下文。
+    单用户模式：取 uid=1 配置的 Key；没有则返回空。
+    uid 参数保留以兼容旧调用（后台任务等），恒定单用户。
     """
     try:
         from server import usersecret
         if uid is None:
-            from invest_radar import ctx
-            uid = ctx.current_uid()
+            uid = 1
         k = usersecret.get_key(uid)
         if _valid(k):
             return k

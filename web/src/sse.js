@@ -82,16 +82,10 @@ export async function postSSE(url, body, handlers = {}, opts = {}) {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
       body: body ? JSON.stringify(body) : undefined,
       signal: ctrl.signal,
     });
 
-    if (res.status === 401) {
-      window.dispatchEvent(new CustomEvent("radar:unauthorized"));
-      handlers.onError?.({ msg: "未登录", kind: "auth" });
-      return;
-    }
     if (!res.ok) {
       let msg = `HTTP ${res.status}`;
       try {

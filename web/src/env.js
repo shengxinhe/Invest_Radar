@@ -1,5 +1,5 @@
 /**
- * M8 · 环境与身份基础设施（本机版）
+ * 环境与 API 基础设施（本机版，单用户）
  *
  * 访问方式
  * --------
@@ -45,36 +45,6 @@ export function setApiBase(url) {
 
 export function getApiBase() {
   return IS_NATIVE ? nativeBase() : "";
-}
-
-// ---- token（APK 用；浏览器依赖 HttpOnly Cookie）----
-const TOKEN_KEY = "radar_token";
-
-export function getToken() {
-  try {
-    return localStorage.getItem(TOKEN_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-
-export function setToken(t) {
-  try {
-    if (t) localStorage.setItem(TOKEN_KEY, t);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch {}
-}
-
-export function clearToken() {
-  setToken("");
-}
-
-/** 统一请求头：浏览器有 Cookie 也带 Bearer，两者后端都认 */
-export function authHeaders(extra = {}) {
-  const h = { ...extra };
-  const t = getToken();
-  if (t) h.Authorization = `Bearer ${t}`;
-  return h;
 }
 
 /** 拼完整 URL */

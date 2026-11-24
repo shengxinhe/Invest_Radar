@@ -1,23 +1,16 @@
-// 极简 API 封装（M8: 支持 APK 跨域 + Bearer token）
-import { API_BASE, authHeaders, clearToken } from "./env.js";
+// 极简 API 封装
+import { API_BASE } from "./env.js";
 
 const BASE = API_BASE;
 
 export async function req(path, opts = {}) {
   const res = await fetch(BASE + path, {
-    headers: authHeaders({
+    headers: {
       "Content-Type": "application/json",
       ...(opts.headers || {}),
-    }),
-    credentials: "include",
+    },
     ...opts,
   });
-  if (res.status === 401) {
-    // 认证失效：清掉本地 token，通知 App 回到登录页
-    clearToken();
-    window.dispatchEvent(new CustomEvent("radar:unauthorized"));
-    throw new Error("未登录");
-  }
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try {
@@ -36,14 +29,7 @@ export async function req(path, opts = {}) {
 export const api = {
   health: () => req("/api/health"),
 
-  // 身份（M8：名字即账户）
-  status: () => req("/api/auth/status"),
-  knownUsers: () => req("/api/auth/users"),
-  me: () => req("/api/auth/me"),
-  rename: (name) =>
-    req("/api/auth/me", { method: "PUT", body: JSON.stringify({ name }) }),
-
-  // DeepSeek Key（每人自己的）
+  // DeepSeek Key（单用户）
   myKey: () => req("/api/me/key"),
   saveKey: (api_key) =>
     req("/api/me/key", { method: "PUT", body: JSON.stringify({ api_key }) }),

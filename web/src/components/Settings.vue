@@ -1,21 +1,6 @@
 <template>
   <div class="settings">
     <div class="sec">
-      <div class="sec-title">我的身份</div>
-      <div class="row">
-        <span class="k">当前名字</span>
-        <span class="v">{{ me.name || "—" }}</span>
-      </div>
-      <div class="edit-row">
-        <input v-model="newName" class="inp" maxlength="24" placeholder="改成别的名字" />
-        <button class="btn" :disabled="!newName.trim() || renaming" @click="rename">
-          {{ renaming ? "…" : "改名" }}
-        </button>
-      </div>
-      <div class="hint">改名不影响数据；名字只用来区分账户，没有密码。</div>
-    </div>
-
-    <div class="sec">
       <div class="sec-title">
         我的 DeepSeek API Key
         <span v-if="key.has_key" class="badge ok">已配置</span>
@@ -56,7 +41,7 @@
       <div v-if="msg" class="result" :class="msgOk ? 'ok' : 'bad'">{{ msg }}</div>
 
       <div class="hint">
-        Key 加密保存在服务器，只有你能用；不会出现在安装包里，也不会写进日志。
+        Key 加密保存在本机，只有你能用；不会出现在安装包里，也不会写进日志。
         留空不填则 AI 功能不可用，其他功能照常。
       </div>
     </div>
@@ -81,34 +66,23 @@
         <div class="metric"><div class="k">本月估算</div><div class="v accent">¥{{ usage?.est_cost_cny ?? "-" }}</div></div>
       </div>
     </div>
-
-    <div class="sec">
-      <button class="btn danger wide" @click="logout">退出登录</button>
-      <div class="hint">退出只是离开；用同一个名字再进来，数据都还在。</div>
-    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from "vue";
 import { api, req } from "../api.js";
-import { API_BASE, clearToken } from "../env.js";
 
-const emit = defineEmits(["logout"]);
-
-const me = ref({});
 const key = ref({ has_key: false, key_hint: "" });
 const usage = ref(null);
 
 const keyInput = ref("");
-const newName = ref("");
 const mCheap = ref("deepseek-chat");
 const mStrong = ref("deepseek-reasoner");
 
 const saving = ref(false);
 const deleting = ref(false);
 const testing = ref(false);
-const renaming = ref(false);
 const msg = ref("");
 const msgOk = ref(false);
 const testResult = ref(null);
@@ -120,7 +94,6 @@ function say(text, ok = false) {
 }
 
 async function load() {
-  try { me.value = await api.me(); } catch (e) { say(e.message); }
   try { key.value = await api.myKey(); } catch {}
   try { usage.value = await req("/api/ai/usage"); } catch {}
   mCheap.value = key.value.model_cheap || "deepseek-chat";
@@ -177,27 +150,6 @@ async function saveModels() {
   } catch (e) {
     say(e.message);
   }
-}
-
-async function rename() {
-  renaming.value = true;
-  try {
-    me.value = await api.rename(newName.value.trim());
-    newName.value = "";
-    say("已改名", true);
-  } catch (e) {
-    say(e.message);
-  } finally {
-    renaming.value = false;
-  }
-}
-
-async function logout() {
-  try {
-    await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
-  } catch {}
-  clearToken();
-  emit("logout");
 }
 
 onMounted(load);

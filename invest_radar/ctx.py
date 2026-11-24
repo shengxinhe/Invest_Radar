@@ -1,20 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-M8 · 请求级用户上下文
+单用户模式 · 数据归属上下文
 
-为什么要 contextvar
-------------------
-store 层有 20 多个私有函数需要 uid。若在每个路由里显式传，main.py 要改 60 处调用，
-既易漏又易错（漏一处就是越权）。
+历史上这里用 contextvar 支撑多用户隔离（M8）。现在改为个人单用户：
+所有数据固定归属 uid=1（OWNER_UID），不再有登录与会话。
 
-做法：中间件在认证通过后 set 当前 uid；store 的公开函数若没收到 uid 参数，
-自动从 contextvar 取。这样：
-  · 路由代码几乎不用改
-  · 后台任务（无请求上下文）落到默认 uid=1（房主），不会崩
-  · 显式传 uid 时以显式为准（后台批处理用）
-
-安全性：外部请求必经认证中间件，中间件不 set 就直接 401，
-所以默认值 1 不会把某个访客的数据错认成房主。
+保留 set_uid/reset 接口以兼容后台任务的调用形式；显式传 uid 的调用
+也仍然有效。若未来要恢复多用户，从 git 历史恢复 server/identity.py
+与 migrations/007_multiuser.py 即可。
 """
 import contextvars
 
@@ -24,7 +17,7 @@ _uid: contextvars.ContextVar[int] = contextvars.ContextVar("radar_uid", default=
 
 
 def set_uid(uid: int):
-    """返回 token，用于 finally 里 reset。"""
+    """返回 token，用于 finally 里 reset。单用户模式下一般不需要调用。"""
     return _uid.set(int(uid))
 
 

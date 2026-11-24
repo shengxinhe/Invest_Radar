@@ -4,6 +4,11 @@
 
 **一句话**：本地抓 A 股数据 → 存 SQLite → FastAPI 出接口 → 手机 PWA / APK 使用 → DeepSeek 驱动的交易员模式 AI 解读。
 
+> **个人使用 vs 开源**：本项目按「单用户、免登录」设计——启动即用，没有账户体系。你的数据（持仓、Key、研究记录）全部留在本机：
+> - **个人使用**：`invest_radar/config.py` 是开源默认示例；你的真实配置写在 `invest_radar/config.local.py`（已 gitignore，启动时自动覆盖 `config.py`），永远不会被推上 GitHub。
+> - **开源使用**：任何人 clone 后只需改 `config.py`（或同样建一个 `config.local.py`）就能跑起来，整个框架可复用。
+> - ⚠️ 服务默认只监听 `127.0.0.1`。因为免登录，**不要把 8000 端口直接暴露到公网**；远程访问请走 Tailscale（仅限你自己的设备）。
+
 ---
 
 ## 它解决什么问题
@@ -46,7 +51,7 @@
 | 龙虎榜 / 两融 / 解禁 / 股东户数 | 东方财富 |
 | 期货（沪铜等，用于有色股主变量） | 新浪期货 |
 
-### AI 功能（DeepSeek，每用户自己的 Key）
+### AI 功能（DeepSeek，用你自己配置的 Key）
 
 | 功能 | 说明 |
 |---|---|
@@ -112,7 +117,7 @@ cp .env.example .env
 DEEPSEEK_API_KEY=sk-你的key
 ```
 
-> **也可以不填**：启动后在 App 的「我的设置」里填，每个用户各自独立。
+> **也可以不填**：启动后在 App 的「我的设置」里填。
 
 ### 4. 改成你自己的股票
 
@@ -148,7 +153,7 @@ python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
 
 浏览器打开 http://127.0.0.1:8000
 
-**第一次进入**：输入一个名字（如「我自己」），系统自动创建账户，**没有密码**。之后浏览器会记住 30 天。
+**无需登录**：个人单用户设计，启动即用，没有任何账户或口令。
 
 ---
 
@@ -164,7 +169,7 @@ Tailscale 把你的设备组成一个私有网络，手机可以直接访问电�
 - 电脑：https://tailscale.com/download
 - 手机：应用商店搜 Tailscale
 
-**2. 两台设备登录同一个账号**
+**2. 两台设备登录同一个 Tailscale 账号**
 
 **3. 电脑上开启 HTTPS 服务**
 
@@ -276,8 +281,7 @@ VITE_API_BASE=https://你的地址 npm run build
 │    watcher.py    轮询 + 三级通知             │
 │                                             │
 │  server/                API 层               │
-│    main.py       FastAPI + SSE              │
-│    identity.py   用户身份（名字登录）          │
+│    main.py       FastAPI + SSE（单用户免登录） │
 │    quotes.py     共享行情轮询                 │
 │    llm/          DeepSeek 异步客户端          │
 │                                             │
@@ -303,8 +307,8 @@ investment-radar/
 │   ├── watcher.py         轮询 + 告警
 │   └── websearch.py       巨潮 + 东财检索
 ├── server/
-│   ├── main.py            FastAPI 路由
-│   ├── identity.py        用户身份
+│   ├── main.py            FastAPI 路由（单用户免登录）
+│   ├── usersecret.py      API Key 加密存储
 │   ├── quotes.py          共享行情轮询
 │   └── llm/
 │       ├── client.py      DeepSeek 异步客户端
@@ -399,7 +403,7 @@ Stop-Process -Id <上面查到的PID> -Force
 - 是否超过 20 个字符
 - 是否全是 ASCII 字符（不能有中文）
 
-也可以在 App 的「我的设置」里填，会存到数据库按用户隔离。
+也可以在 App 的「我的设置」里填，加密存到本机数据库。
 </details>
 
 <details>

@@ -1,6 +1,5 @@
 <template>
-  <Login v-if="!authed" @authed="onAuthed" />
-  <div v-else class="app">
+  <div class="app">
     <!-- 断网横幅 -->
     <div v-if="offline" class="offline-bar" @click="onOnline">
       当前离线 · 点此重新连接
@@ -12,7 +11,6 @@
         <div v-if="tab === 'home'" class="gh-brand">
           <span class="pulse" :class="{ risk: pulse.risk > 0 }"></span>
           <span class="gh-title">投资雷达</span>
-          <span v-if="myName" class="gh-who">{{ myName }}</span>
         </div>
         <button v-else-if="tab === 'quote' && stockCode" class="gh-back" @click="stockCode=''; quoteMode='feed'">‹</button>
         <div v-else class="gh-brand" style="gap:6px">
@@ -147,7 +145,7 @@
 
     <!-- ============ 我的设置 ============ -->
     <main class="main" v-show="tab === 'me'">
-      <Settings @logout="onLogout" />
+      <Settings />
     </main>
 
     <!-- 词条详情抽屉 -->
@@ -172,7 +170,6 @@ import Drawer from "./components/Drawer.vue";
 import QuickAI from "./components/QuickAI.vue";
 import GlobalAI from "./components/GlobalAI.vue";
 import ResearchView from "./components/ResearchView.vue";
-import Login from "./components/Login.vue";
 import MarketOverview from "./components/MarketOverview.vue";
 import TodayFocus from "./components/TodayFocus.vue";
 import Settings from "./components/Settings.vue";
@@ -181,8 +178,6 @@ import { API_BASE, IS_NATIVE } from "./env.js";
 import { useSearch } from "./composables/useSearch.js";
 import { useQuoteStream } from "./composables/useQuoteStream.js";
 
-const authed = ref(false);
-const myName = ref("");
 const offline = ref(false);
 
 // M5: 共享行情流（生命周期由 composable 管理）
@@ -275,7 +270,7 @@ async function genDaily() {
   dailyStreaming.value = true;
   dailyText.value = "";
   try {
-    const res = await fetch(`${API_BASE}/api/ai/daily-brief`, { method: "POST", headers: authHeaders(), credentials: "include" });
+    const res = await fetch(`${API_BASE}/api/ai/daily-brief`, { method: "POST" });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       throw new Error(j.detail || `HTTP ${res.status}`);
@@ -310,24 +305,10 @@ function onDocClick(e) {
   if (!e.target.closest(".search-box") && !e.target.closest(".dropdown")) showDD.value = false;
 }
 
-function onAuthed(info) {
-  authed.value = true;
-  myName.value = info?.name || "";
+onMounted(() => {
   loadWatch();
   loadPulse();
   loadUsage();
-}
-
-onMounted(() => {
-  // 认证态探针 + 401 兜底回登录
-  fetch(`${API_BASE}/api/auth/status`, { credentials: "include" })
-    .then((r) => r.json()).then((j) => {
-      const d = j.data || {};
-      authed.value = !!d.authenticated;
-      myName.value = d.user || "";
-      if (authed.value) { loadWatch(); loadPulse(); loadUsage(); }
-    }).catch(() => { offline.value = true; });
-  window.addEventListener("radar:unauthorized", onUnauth);
 
   // 断网检测（Capacitor WebView 也支持这两个事件）
   window.addEventListener("online", onOnline);
@@ -336,17 +317,15 @@ onMounted(() => {
 
   document.addEventListener("click", onDocClick);
 });
-function onUnauth() { authed.value = false; myName.value = ""; }
-function onLogout() { authed.value = false; myName.value = ""; }
 function onOffline() { offline.value = true; }
 function onOnline() {
   offline.value = false;
   // 恢复网络后补一次数据
-  if (authed.value) { loadWatch(); loadPulse(); }
+  loadWatch();
+  loadPulse();
 }
 onUnmounted(() => {
   document.removeEventListener("click", onDocClick);
-  window.removeEventListener("radar:unauthorized", onUnauth);
   window.removeEventListener("online", onOnline);
   window.removeEventListener("offline", onOffline);
 });
@@ -354,8 +333,7 @@ onUnmounted(() => {
 
 <style>
 /* 顶栏玻璃（全局 2 处 backdrop-filter 之一） */
-.offline-bar{position:sticky;top:0;z-index:120;background:rgba(239,68,68,.92);color:#fff;font-size:12.5px;text-align:center;padding:7px 12px;cursor:pointer;}
-.glass-header{
+.offline-bar{position:sticky;top:0;z-index:120;background:rgba(239,68,68,.92);color:#fff;font-size:12.5px;text-align:center;padding:7px 12px;cursor:pointer;}.glass-header{
   position:sticky;top:0;z-index:90;
   background:rgba(8,9,15,.72);
   -webkit-backdrop-filter:blur(24px) saturate(160%);
@@ -365,7 +343,6 @@ onUnmounted(() => {
 .gh-inner{display:flex;align-items:center;gap:10px;padding:calc(10px + var(--safe-top)*0) 14px 10px}
 .gh-brand{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .gh-title{font-size:15px;font-weight:600;white-space:nowrap}
-.gh-who{font-size:11px;color:var(--accent);background:rgba(94,234,212,.12);border:1px solid rgba(94,234,212,.28);border-radius:999px;padding:1px 7px;max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gh-title2{flex:1;font-size:14px;font-weight:600}
 .gh-back{width:30px;height:30px;border-radius:10px;font-size:18px;
   display:flex;align-items:center;justify-content:center;flex-shrink:0;

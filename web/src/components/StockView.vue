@@ -320,7 +320,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from "vue";
-import { API_BASE, authHeaders } from "../env.js";
+import { API_BASE } from "../env.js";
 import { api, pctCls, fmtPct, fmtMoney, fmtShares, levelDot } from "../api.js";
 import { postSSE } from "../sse.js";
 import KLinePanel from "./kline/KLinePanel.vue";
@@ -387,8 +387,6 @@ async function batchAsk() {
   batchCount.value = selected.value.length;
   try {
     const res = await fetch(`${API_BASE}/api/ai/batch`, {
-      headers: authHeaders(),
-      credentials: "include",
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ entry_ids: selected.value }),

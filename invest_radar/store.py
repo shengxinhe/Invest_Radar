@@ -63,17 +63,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS stock_fts USING fts5(
   code, name, pinyin, concepts, content='stock', content_rowid='rowid'
 );
 
--- M8 多用户：名字即账户（无密码）
-CREATE TABLE IF NOT EXISTS app_user (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  name          TEXT NOT NULL,
-  name_key      TEXT NOT NULL UNIQUE,
-  created_at    INTEGER,
-  last_seen_at  INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_user_key ON app_user(name_key);
+-- 单用户模式：数据统一归属 uid=1。历史上 app_user/app_session 支撑多用户
+-- 登录（M8），现已移除登录；旧库里的这两张表不再使用、无害留存，
+-- 新库不再创建。
 
--- M8 私有表：自选股按 (user_id, code) 隔离，grp 为分组
+-- 私有表：自选股按 (user_id, code) 隔离，grp 为分组
 CREATE TABLE IF NOT EXISTS watch (  user_id INTEGER NOT NULL DEFAULT 1,
   code TEXT NOT NULL,
   role TEXT,
@@ -181,18 +175,7 @@ CREATE TABLE IF NOT EXISTS meta (
   v TEXT
 );
 
--- ============ M8: 以下表原本只由 migrations 创建，补齐以保证全新库可用 ============
-
-CREATE TABLE IF NOT EXISTS app_session (
-  sid        TEXT PRIMARY KEY,
-  created_at INTEGER NOT NULL,
-  last_seen  INTEGER,
-  ip         TEXT DEFAULT '',
-  ua         TEXT DEFAULT '',
-  user_id    INTEGER DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_sess_last ON app_session(last_seen DESC);
-CREATE INDEX IF NOT EXISTS idx_sess_user ON app_session(user_id, last_seen DESC);
+-- ============ 业务表（单用户；表结构保留 user_id 列以兼容旧库） ============
 
 CREATE TABLE IF NOT EXISTS entry_user_state (
   user_id    INTEGER NOT NULL DEFAULT 1,
@@ -293,12 +276,6 @@ def init():
     c = conn()
     c.executescript(SCHEMA)
     c.commit()
-
-    # M8: 保证房主账户（user_id=1）存在，存量数据都归它
-    if not c.execute("SELECT 1 FROM app_user WHERE id=1").fetchone():
-        c.execute("INSERT INTO app_user(id,name,name_key,created_at,last_seen_at) "
-                  "VALUES(1,?,?,?,?)", ("房主", "房主", now(), now()))
-        c.commit()
 
     # 首次启动：把 config.WATCHLIST 导入 watch 表 + stock 表（保证有名字显示）
     if not c.execute("SELECT 1 FROM meta WHERE k='watch_seeded'").fetchone():
