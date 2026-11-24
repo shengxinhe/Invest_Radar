@@ -63,7 +63,7 @@ def main():
 
     # 抽查
     print("\n搜索抽查:")
-    for q in ["000060", "zjln", "岭南", "gzgf", "贵州茅台", "mt"]:
+    for q in ["600519", "gzmt", "茅台", "000001", "payh"]:
         r = store.search_stock(q, 5)
         names = "  ".join(f"{x['code']} {x['name']}" for x in r[:3])
         print(f"  {q:8s} -> {names or '(空)'}")

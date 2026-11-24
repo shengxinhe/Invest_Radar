@@ -1270,7 +1270,7 @@ def wal_checkpoint():
 
 
 def need_refresh(key):
-    """key 形如 quote:000060 / notice:000060 / universe / kline:000060:day"""
+    """key 形如 quote:000001 / notice:000001 / universe / kline:000001:day"""
     kind = key.split(":")[0]
     if kind == "quote":
         ttl = TTL["quote_open"] if _is_trading_time() else TTL["quote_closed"]

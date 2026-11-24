@@ -132,7 +132,7 @@ if __name__ == "__main__":
         await new Promise(r=>setTimeout(r,700));
         const inp = document.querySelector('.search-box input');
         if (!inp) return 'no-input';
-        inp.value='000060';
+        inp.value='000001';
         inp.dispatchEvent(new Event('input',{bubbles:true}));
         await new Promise(r=>setTimeout(r,1200));
         const dd = document.querySelector('.dd-item');

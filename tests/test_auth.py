@@ -13,12 +13,12 @@ from server.main import app
 
 PROTECTED = [
     ("GET", "/api/watch"),
-    ("GET", "/api/search?q=600251"),
-    ("GET", "/api/stock/000060"),
-    ("POST", "/api/stock/000060/sync"),
+    ("GET", "/api/search?q=600519"),
+    ("GET", "/api/stock/000001"),
+    ("POST", "/api/stock/000001/sync"),
     ("GET", "/api/ai/status"),
     ("GET", "/api/ai/usage"),
-    ("PUT", "/api/watch/000060/thesis"),
+    ("PUT", "/api/watch/000001/thesis"),
     ("POST", "/api/ai/global"),
 ]
 

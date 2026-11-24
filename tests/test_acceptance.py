@@ -90,13 +90,13 @@ c.close()
 # ============ 3. API 矩阵 ============
 section("3 / API")
 ENDPOINTS = [
-    "/api/watch", "/api/search?q=000060", "/api/stock/000060",
+    "/api/watch", "/api/search?q=000001", "/api/stock/000001",
     "/api/feed?limit=3", "/api/pulse", "/api/market/overview",
     "/api/ai/usage", "/api/ai/status", "/api/entries/states",
     "/api/notify/stats", "/api/research", "/api/reports",
     "/api/quotes/poller", "/api/watcher/queue", "/api/daily",
-    "/api/stock/000060/entries?type=notice", "/api/stock/000060/extras",
-    "/api/stock/000060/kline?period=day", "/api/watch/000060/thesis/history",
+    "/api/stock/000001/entries?type=notice", "/api/stock/000001/extras",
+    "/api/stock/000001/kline?period=day", "/api/watch/000001/thesis/history",
 ]
 fails = []
 for p in ENDPOINTS:
@@ -143,7 +143,7 @@ check("LLM Key 已配置", sa.get("available") is True)
 check("提示词版本号存在", bool(sa.get("prompt_version")), sa.get("prompt_version", ""))
 
 # 实测一次解读（走缓存或真实调用）
-ents = s.get(f"{U}/api/stock/000060/entries",
+ents = s.get(f"{U}/api/stock/000001/entries",
              params={"type": "notice", "days": 3650}, timeout=25).json()["data"]
 if ents:
     eid = ents[0]["id"]

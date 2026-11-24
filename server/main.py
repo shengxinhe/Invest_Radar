@@ -1463,7 +1463,7 @@ def api_export_report(rid: int):
 async def api_monthly_review(body: dict):
     """
     按公司生成月度复盘。严格按时间顺序引用资料（不事后伪装）。
-    body: {code: "000060", period: "2026-11"}
+    body: {code: "000001", period: "2026-11"}
     """
     if not llm.available():
         fail("LLM 未配置", 503)

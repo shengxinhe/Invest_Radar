@@ -486,7 +486,7 @@ function viewIrm(s){
 
 // 启动
 function initFromHash(){
-  // 支持 #tab=notice 和 #code=600251 直接定位，可收藏书签
+  // 支持 #tab=notice 和 #code=600519 直接定位，可收藏书签
   const h = location.hash.slice(1);
   h.split("&").forEach(p=>{
     const [k,val] = p.split("=");
