@@ -1,4 +1,4 @@
-﻿# ============ 密钥与环境 ============
+# ============ 密钥与环境 ============
 .env
 .env.*
 !.env.example
@@ -63,5 +63,7 @@ invest_radar/config.local.py
 # ============ 个人脚本（抓数据/截图等一次性工具）============
 scripts/shoot_*.py
 scripts/_*.py
-landing/shots/*.png
-landing/preview*.png
+
+# ============ 落地页（独立的部署仓库，见 shengxinhe/shengxinhe.github.io）============
+landing/
+
